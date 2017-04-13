@@ -41,6 +41,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
 //
+`default_nettype	none
 `define	I2CIDLE		3'h0
 `define	I2CSTART	3'h1
 `define	I2CADDR		3'h2
@@ -51,34 +52,56 @@
 `define	I2CILLEGAL	3'h7
 //
 //
-module	i2cslave(i_clk, i_rst,
+`define	BUS_IDLE	2'b00
+`define	BUS_READ	2'b01
+`define	BUS_SEND	2'b10
+//
+//
+module	wbi2cslave(i_clk, i_rst,
 		i_wb_cyc, i_wb_stb, i_wb_we, i_wb_addr, i_wb_data, i_wb_sel,
 			o_wb_ack, o_wb_stall, o_wb_data,
-		i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda);
-	parameter	INITIAL_MEM = "";
+		i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda,
+		o_dbg);
+	parameter	INITIAL_MEMA = "", INITIAL_MEMB = "",
+			INITIAL_MEMC = "", INITIAL_MEMD = "";
 	parameter [0:0]	WB_READ_ONLY = 1'b0;
 	parameter [0:0]	I2C_READ_ONLY = 1'b0;
+	parameter [6:0]	SLAVE_ADDRESS = 7'h50;
 	localparam [0:0]	READ_ONLY = (WB_READ_ONLY)&&(I2C_READ_ONLY);
-	input			i_clk, i_rst;
-	input			i_wb_cyc, i_wb_stb, i_wb_we;
-	input		[4:0]	i_wb_addr;
-	input		[31:0]	i_wb_data;
-	input		[3:0]	i_wb_sel;
+	input	wire		i_clk, i_rst;
+	input	wire		i_wb_cyc, i_wb_stb, i_wb_we;
+	input	wire	[4:0]	i_wb_addr;
+	input	wire	[31:0]	i_wb_data;
+	input	wire	[3:0]	i_wb_sel;
 	output	reg		o_wb_ack;
 	output	wire		o_wb_stall;
 	output	reg	[31:0]	o_wb_data;
-	input			i_i2c_sck, i_i2c_sda;
+	input	wire		i_i2c_sck, i_i2c_sda;
 	output	reg		o_i2c_sck, o_i2c_sda;
+	//
+	output	wire	[31:0]	o_dbg;
 
-	reg	[7:0]	mem	[0:127];
+	reg	[7:0]	mema	[0:31];
+	reg	[7:0]	memb	[0:31];
+	reg	[7:0]	memc	[0:31];
+	reg	[7:0]	memd	[0:31];
+
+`ifndef	VERILATOR
 	initial begin
-		if (INITIAL_MEM != "")
-			$readmemh(INITIAL_MEM, mem);
+		if (INITIAL_MEMA != "")
+			$readmemh(INITIAL_MEMA, mema);
+		if (INITIAL_MEMB != "")
+			$readmemh(INITIAL_MEMB, memb);
+		if (INITIAL_MEMC != "")
+			$readmemh(INITIAL_MEMC, memc);
+		if (INITIAL_MEMD != "")
+			$readmemh(INITIAL_MEMD, memd);
 	end
+`endif
 
-	reg		rd_stb, wr_stb;
-	reg	[6:0]	i2c_addr;
-	reg	[7:0]	wr_data;
+	reg	[4:0]	wr_stb;
+	reg	[7:0]	i2c_addr;
+	wire	[7:0]	wr_data;
 
 	reg	[3:0]	r_we;
 	reg	[31:0]	r_data;
@@ -88,44 +111,49 @@ module	i2cslave(i_clk, i_rst,
 	begin
 		if (!READ_ONLY)
 		begin
-			r_we[3] <= (i_wb_stb)&&(i_wb_we)&&(i_wb_sel[3])
-				||(wr_stb)&&(i2c_addr[1:0]==2'b00);
-			r_we[2] <= (i_wb_stb)&&(i_wb_we)&&(i_wb_sel[2])
-				||(wr_stb)&&(i2c_addr[1:0]==2'b01);
-			r_we[1] <= (i_wb_stb)&&(i_wb_we)&&(i_wb_sel[1])
-				||(wr_stb)&&(i2c_addr[1:0]==2'b10);
-			r_we[0] <= (i_wb_stb)&&(i_wb_we)&&(i_wb_sel[0])
-				||(wr_stb)&&(i2c_addr[1:0]==2'b11);
-			r_data  <= (wr_stb)? {(4){wr_data}} : i_wb_data;
-			r_addr  <= (wr_stb) ? i2c_addr[6:2] : i_wb_addr;
+			if (wr_stb[4])
+				r_we <= wr_stb[3:0];
+			else if ((i_wb_stb)&&(i_wb_we))
+				r_we <= i_wb_sel;
+			else
+				r_we <= 4'h0;
+			r_data  <= (wr_stb[4])? {(4){wr_data}} : i_wb_data;
+			r_addr  <= (wr_stb[4]) ? i2c_addr[6:2] : i_wb_addr;
 		end else
 			r_we <= 4'h0;
 			// data and address are don't cares if READ_ONLY is set
 	end
 
 	always @(posedge i_clk)
-	begin
 		if (r_we[3])
-			mem[{r_addr, 2'b00}] <= r_data[31:24];
-		if (r_we[2])
-			mem[{r_addr, 2'b01}] <= r_data[23:16];
-		if (r_we[1])
-			mem[{r_addr, 2'b10}] <= r_data[15: 8];
-		if (r_we[0])
-			mem[{r_addr, 2'b11}] <= r_data[ 7: 0];
-	end
+			mema[r_addr] <= r_data[31:24];
 
 	always @(posedge i_clk)
-		o_wb_data <= { mem[{ i_wb_addr[4:0], 2'b00 }], 
-			mem[{ i_wb_addr[4:0], 2'b01 }],
-			mem[{ i_wb_addr[4:0], 2'b10 }],
-			mem[{ i_wb_addr[4:0], 2'b11 }] };
+		if (r_we[2])
+			memb[r_addr] <= r_data[23:16];
+
+	always @(posedge i_clk)
+		if (r_we[1])
+			memc[r_addr] <= r_data[15: 8];
+
+	always @(posedge i_clk)
+		if (r_we[0])
+			memd[r_addr] <= r_data[ 7: 0];
+
+	always @(posedge i_clk)
+		o_wb_data[31:24] <= mema[ i_wb_addr[4:0] ];
+	always @(posedge i_clk)
+		o_wb_data[23:16] <= memb[ i_wb_addr[4:0] ];
+	always @(posedge i_clk)
+		o_wb_data[15: 8] <= memc[ i_wb_addr[4:0] ];
+	always @(posedge i_clk)
+		o_wb_data[ 7: 0] <= memd[ i_wb_addr[4:0] ];
 
 	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
-		o_wb_ack <= i_wb_stb;
+		o_wb_ack <= (i_wb_stb)&&(!o_wb_stall);
 
-	assign	o_wb_stall = 1'b0;
+	assign	o_wb_stall = (wr_stb[4]);
 
 	//
 	//
@@ -152,116 +180,227 @@ module	i2cslave(i_clk, i_rst,
 	wire	i2c_start  = ( last_sck)&&( this_sck)&&( last_sda)&&(!this_sda);
 	wire	i2c_stop   = ( last_sck)&&( this_sck)&&(!last_sda)&&( this_sda);
 
-	reg	[2:0]	state;
-	reg	[7:0]	dreg, oreg, rd_val;
+	reg	[2:0]	i2c_state;
+	reg	[7:0]	dreg, oreg, rd_val, i2c_rx_byte;
+	wire	[7:0]	i2c_tx_byte;
 	reg	[2:0]	dbits;
-	reg		tx_rx_n;
-	initial	state = `I2CIDLE;
+	reg		slave_tx_rx_n, i2c_slave_ack, i2c_rx_stb, i2c_tx_stb;
+	initial	i2c_state = `I2CIDLE;
 	initial	o_i2c_sck = 1'b1;
 	initial	o_i2c_sda = 1'b1;
+	initial	i2c_slave_ack  = 1'b1;
 	always	@(posedge i_clk)
 	begin
 		// Default is to do nothing with the output ports.  A 1'b1 does
 		// that.
 		o_i2c_sck <= 1'b1;
 		o_i2c_sda <= 1'b1;
+		i2c_tx_stb <= 1'b0;
+		i2c_rx_stb <= 1'b0;
 		if (i2c_posedge)
 			dreg  <= { dreg[6:0], this_sda };
 		if (i2c_negedge)
 			oreg  <= { oreg[6:0], oreg[0] };
-		case(state)
+		case(i2c_state)
 		`I2CIDLE: begin
 				dbits <= 0;
 				if (i2c_start)
-					state <= `I2CSTART;
+					i2c_state <= `I2CSTART;
 			end
 		`I2CSTART: begin
 				dbits <= 0;
 				if (i2c_negedge)
-					state <= `I2CADDR;
+					i2c_state <= `I2CADDR;
 			end
 		`I2CADDR: begin
 				if (i2c_negedge)
 					dbits <= dbits + 1'b1;
 				if ((i2c_negedge)&&(dbits == 3'h7))
-					state <= `I2CSACK;
-				tx_rx_n <= dreg[0];
+				begin
+					slave_tx_rx_n <= dreg[0];
+					if (dreg[7:1] == SLAVE_ADDRESS)
+					begin
+						i2c_state <= `I2CSACK;
+						i2c_slave_ack <= 1'b0;
+					end else begin
+						// Ignore this, its not for
+						// me.
+						i2c_state <= `I2CILLEGAL;
+						i2c_slave_ack <= 1'b1;
+					end
+				end
 			end
 		`I2CSACK: begin
 				dbits <= 3'h0;
-				o_i2c_sda <= 1'b0;
+				// NACK anything outside of our address range
+				o_i2c_sda <= i2c_slave_ack;
 				oreg <= rd_val;
 				if (i2c_negedge)
-					state <= (tx_rx_n)?`I2CTX:`I2CRX;
+				begin
+					i2c_state <= (slave_tx_rx_n)?`I2CTX:`I2CRX;
+					oreg <= i2c_tx_byte;
+				end
 			end
-		`I2CRX: begin	// Slave reads
-				// Write to the slave (that's us)
+		`I2CRX: begin	// Slave reads from the bus
+				//
+				// First byte received is always the memory
+				// address.
+				//
 				if (i2c_negedge)
 					dbits <= dbits + 1'b1;
 				if ((i2c_negedge)&&(dbits == 3'h7))
-					state <= `I2CSACK;
+				begin
+					i2c_rx_byte <= dreg;
+					i2c_rx_stb  <= 1'b1;
+					i2c_state <= `I2CSACK;
+				end
 			end
 		`I2CTX: begin	// Slave transmits
 				// Read from the slave (that's us)
 				if (i2c_negedge)
 					dbits <= dbits + 1'b1;
 				if ((i2c_negedge)&&(dbits == 3'h7))
-					state <= `I2CMACK;
+				begin
+					i2c_tx_stb <= 1'b1;
+					i2c_state <= `I2CMACK;
+				end
 				o_i2c_sda <= oreg[7];
 			end
 		`I2CMACK: begin
 				dbits <= 3'h0;
 				if (i2c_negedge)
-					state <= `I2CTX;
+				begin
+					i2c_state <= `I2CTX;
+					oreg <= i2c_tx_byte;
+				end
 				oreg <= rd_val;
 			end
 		`I2CILLEGAL:	dbits <= 3'h0;
 		// default:	dbits <= 3'h0;
 		endcase
 		if (i2c_stop)
-			state <= `I2CIDLE;
+			i2c_state <= `I2CIDLE;
+		else if (i2c_start)
+			i2c_state <= `I2CSTART;
 	end
 
-	initial	rd_stb = 1'b0;
+	reg	[1:0]	bus_state;
+	reg		go_bus_idle, wr_complete,
+			bus_rd_stb, bus_wr_stb;
+	//
+	initial		wr_complete = 1'b0;
+	initial		bus_rd_stb  = 1'b0;
+	initial		bus_wr_stb  = 1'b0;
+	initial		bus_state   = `BUS_IDLE;
+	initial		go_bus_idle = 1'b0;
 	always @(posedge i_clk)
-		rd_stb <= (i2c_posedge)&&((state == `I2CSACK)
-						||(state == `I2CMACK));
+	begin
+		go_bus_idle <= ((i2c_state == `I2CIDLE)
+				||(i2c_state == `I2CSTART)
+				||(i2c_state == `I2CILLEGAL));
+		bus_rd_stb <= 1'b0;
+		bus_wr_stb <= 1'b0;
+		if (go_bus_idle)
+			bus_state <= `BUS_IDLE;
+		else case(bus_state)
+			`BUS_IDLE: begin
+					if (i2c_rx_stb)
+					begin
+						i2c_addr <= i2c_rx_byte;
+						bus_state <= `BUS_READ;
+						bus_rd_stb <= 1'b1;
+					end else if (i2c_tx_stb)
+					begin
+						bus_state <= `BUS_SEND;
+						i2c_addr <= i2c_addr + 1'b1;
+						bus_rd_stb <= 1'b1;
+					end
+				end
+			`BUS_READ: if (i2c_rx_stb)
+				begin
+					// Reading from the bus means we are
+					// writing to memory
+					bus_wr_stb <= 1'b1;
+				end
+				// Increment the address once a write completes
+				// if (wr_complete)
+				//	i2c_addr <= i2c_addr + 1'b1;
+			`BUS_SEND: if (i2c_tx_stb)
+				begin
+					// Once we've finished transmitting,
+					// increment the address to read the
+					// next item
+					i2c_addr <= i2c_addr + 1'b1;
+					bus_rd_stb <= 1'b1;
+				end
+			default: begin end
+		endcase
 
-	reg	pre_write;
-	initial	pre_write = 1'b0;
-	always @(posedge i_clk)
-		if (i2c_stop)
-			pre_write <= 1'b0;
-		else if (state == `I2CRX)
-			pre_write <= (!I2C_READ_ONLY);
-		else if (state == `I2CIDLE)
-			pre_write <= 1'b0;
-
-	initial	wr_stb = 1'b0;
-	always @(posedge i_clk)
-		wr_stb  <= (i2c_negedge)&&(state == `I2CSACK)&&(pre_write);
-
-	always @(posedge i_clk)
-		if ((this_sck)&&(state == `I2CRX))
-			wr_data <= dreg;
-
-	always @(posedge i_clk)
-		if (state == `I2CADDR)
-			i2c_addr <= dreg[7:1] + ((tx_rx_n)? 7'h7f:7'h7e);
-		else if (i2c_posedge)
+		if (wr_complete)
 		begin
-			// Slave ACK's during master write slave reads, and
-			// following an address
-			if (state == `I2CSACK)
-				i2c_addr <= i2c_addr + 1'b1;
-			else if (state == `I2CMACK)
-				i2c_addr <= i2c_addr + 1'b1;
+			i2c_addr <= i2c_addr + 1'b1;
+			bus_rd_stb <= 1'b1;
 		end
+	end
 
+	reg	[2:0]	wr_pipe;
+	initial	wr_pipe     = 3'h0;
+	initial	wr_complete = 1'b0;
 	always @(posedge i_clk)
-		if (rd_stb)
-			rd_val <= mem[i2c_addr];
-		else if ((i2c_negedge)&&(state == `I2CMACK))
-			rd_val <= { rd_val[6:0], rd_val[0] };
+		wr_pipe <= { wr_pipe[1:0], bus_wr_stb };
+	always @(posedge i_clk)
+		wr_complete <= wr_pipe[2];
 
+	initial	wr_stb = 5'b0;
+	always @(posedge i_clk)
+	begin
+		wr_stb[4]  <= bus_wr_stb;
+		wr_stb[3]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b00);
+		wr_stb[2]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b01);
+		wr_stb[1]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b10);
+		wr_stb[0]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b11);
+	end
+
+	assign	wr_data = i2c_rx_byte;
+
+
+	reg	[7:0]	pipe_mema, pipe_memb, pipe_memc, pipe_memd;
+	reg	[1:0]	pipe_sel;
+	always @(posedge i_clk)
+		if(bus_rd_stb)
+			pipe_mema <= mema[i2c_addr[6:2]];
+	always @(posedge i_clk)
+		if (bus_rd_stb)
+			pipe_memb <= memb[i2c_addr[6:2]];
+	always @(posedge i_clk)
+		if (bus_rd_stb)
+			pipe_memc <= memc[i2c_addr[6:2]];
+	always @(posedge i_clk)
+		if (bus_rd_stb)
+			pipe_memd <= memd[i2c_addr[6:2]];
+	always @(posedge i_clk)
+		if (bus_rd_stb)
+			pipe_sel <= i2c_addr[1:0];
+	//
+	//
+	always @(posedge i_clk)
+		case(pipe_sel)
+		2'b00: rd_val <= pipe_mema;
+		2'b01: rd_val <= pipe_memb;
+		2'b10: rd_val <= pipe_memc;
+		2'b11: rd_val <= pipe_memd;
+		endcase
+
+	assign	i2c_tx_byte = rd_val;
+
+	//
+	//
+	//
+	reg	r_trigger;
+	initial	r_trigger = 1'b0;
+	always @(posedge i_clk)
+		r_trigger <= i2c_start;
+	assign	o_dbg = { r_trigger, 27'h0,
+			i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda // 4b
+			};
 endmodule

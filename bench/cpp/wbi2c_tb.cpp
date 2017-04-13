@@ -52,8 +52,11 @@
 #include "wb_tb.h"
 // #include "twoc.h"
 
+#define	SLAVE_ADDRESS	0x50
 #define	SCK	m_core->i_i2c_sck
 #define	SDA	m_core->i_i2c_sda
+#define	MASTER_WR	0
+#define	MASTER_RD	1
 
 class	I2C_TB : public WB_TB<Vwbi2cslave> {
 public:
@@ -87,6 +90,28 @@ public:
 
 	}
 
+	// Ever since we moved to four separate memories, accessing one
+	// individual memory has gotten a touch tricker.  Let's put all of
+	// that tricky into this one routine.
+	unsigned char operator[](const int addr) const {
+		unsigned char *mem;
+		int av;
+
+		av = (addr >> 2) & 0x01f;
+		switch(addr&3) {
+		case 0: mem = m_core->v__DOT__mema;
+			break;
+		case 1: mem = m_core->v__DOT__memb;
+			break;
+		case 2: mem = m_core->v__DOT__memc;
+			break;
+		case 3: default:
+			mem = m_core->v__DOT__memd;
+		}
+
+		return mem[av];
+	}
+
 	void	i2c_halfwait(void) {
 		for(int i=0; i<8; i++)
 			tick();
@@ -97,6 +122,11 @@ public:
 		i2c_halfwait();
 	}
 
+	void	i2c_idle(void) {
+		for(int i=0; i<26; i++)
+			i2c_wait();
+	}
+
 	void	i2c_start() {
 		printf("I2C-START\n");
 		TBASSERT(*this, ((SCK)&&(SDA)));
@@ -104,6 +134,16 @@ public:
 		i2c_halfwait();
 		SCK = 0;
 		i2c_halfwait();
+	}
+
+	void	i2c_repeat_start() {
+		printf("I2C-REPEAT-START\n");
+		TBASSERT(*this, (!SCK));
+		SDA = 1;
+		i2c_halfwait();
+		SCK = 1;
+		i2c_halfwait();
+		i2c_start();
 	}
 
 	void	i2c_stop() {
@@ -164,16 +204,35 @@ printf("I2C-READ: %02x\n", b);
 		return b;
 	}
 
-	void	i2c_read(int addr, const unsigned cnt, char *buf) {
+	void	i2c_read(int slave_addr, int addr,
+			const unsigned cnt, char *buf) {
 		int	ack;
 
 		if (cnt == 0)
 			return;
 
-		addr <<= 1;
+		printf("I2C_READ(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
+			slave_addr, addr, cnt);
+
+		slave_addr <<= 1;
 		i2c_start();
 
-		i2c_txbyte((addr&0xfe)|1);	// Master is requesting data
+		// First, set the address
+		i2c_txbyte((slave_addr&0xfe)|MASTER_WR);//Master is sending data
+		ack = i2c_rxbit();	// (i.e., the address to rd from)
+		printf("RXACK = %d\n", ack);
+		TBASSERT(*this, (ack==0));
+
+		i2c_txbyte(addr);	// Address we wish to read from
+		ack = i2c_rxbit();
+		printf("RXACK = %d\n", ack);
+		TBASSERT(*this, (ack==0));
+
+		i2c_repeat_start();
+
+
+		// Then, read the data
+		i2c_txbyte((slave_addr&0xfe)|MASTER_RD); // Request data
 		ack = i2c_rxbit();
 		printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
@@ -192,14 +251,27 @@ printf("I2C-READ: %02x\n", b);
 		i2c_stop();
 	}
 
-	void	i2c_write(int addr, const unsigned cnt, const char *buf) {
+	void	i2c_read(int addr, const unsigned cnt, char *buf) {
+		i2c_read(SLAVE_ADDRESS, addr, cnt, buf);
+	}
+
+
+	void	i2c_write(int slave_addr, int addr,
+			const unsigned cnt, const char *buf) {
 		int	ack;
 
-		addr <<= 1;
+		printf("I2C_WRITE(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
+			slave_addr, addr, cnt);
+
+		slave_addr <<= 1;
 		i2c_start();
 
-printf("Sending ADDR %02x\n", addr & 0xfe);
-		i2c_txbyte((addr&0xfe)|0);
+		i2c_txbyte((slave_addr&0xfe)|MASTER_WR);
+		ack = i2c_rxbit();
+		printf("RXACK = %d\n", ack);
+		TBASSERT(*this, (ack==0));
+
+		i2c_txbyte(addr);
 		ack = i2c_rxbit();
 		printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
@@ -212,6 +284,10 @@ printf("Sending ADDR %02x\n", addr & 0xfe);
 		}
 
 		i2c_stop();
+	}
+
+	void	i2c_write(int addr, const unsigned cnt, const char *buf) {
+		i2c_write(SLAVE_ADDRESS, addr, cnt, buf);
 	}
 
 };
@@ -265,25 +341,43 @@ int	main(int argc, char **argv) {
 
 	byteswapbuf(sizeof(buf)/4, (unsigned *)buf);
 
+	//
+	tb->i2c_idle();
+	//
+
 	// Test point 2 : Read from i2c, verify that reads work.
 	tb->i2c_read(0, 1, &tbuf[0]);
-	printf("COMPARING: %02x(RD) to %02x(EXP)\n", tbuf[0]&0x0ff, buf[0]&0x0ff);
+	printf("COMPARING: %02x(RD) to %02x(EXP)\n",
+			tbuf[0]&0x0ff, buf[0]&0x0ff);
 	TBASSERT(*tb, (buf[0] == tbuf[0]));
+
+	//
+	tb->i2c_idle();
+	//
+
 	tb->i2c_read(0, sizeof(buf), tbuf);
 	for(unsigned i=0; i<sizeof(buf); i++) {
 		if (buf[i] != tbuf[i]) {
 			printf("%3d: RX(%02x) != (%02x)EXP\n",
 				i, tbuf[i] & 0x0ff, buf[i]&0x0ff);
-			delete tb;
-			assert(buf[i] == tbuf[i]);
+			TBASSERT(*tb, (buf[i] == tbuf[i]));
 		}
 	}
+
+	//
+	tb->i2c_idle();
+	//
 
 	// Test point 3: Walk through this, reading random bytes
 	for(unsigned i=0, a=7; i<sizeof(buf); i++, a += 41) {
 		a &= 127;
 		printf("READING FROM ADDR: %02x\n", a);
 		tb->i2c_read(a, 1, &tbuf[a]);
+
+		//
+		tb->i2c_idle();
+		//
+
 		if (buf[a] != tbuf[a]) {
 			printf("%3d[%3d]: RX(%02x) != (%02x)EXP\n",
 				i, a, tbuf[a] & 0x0ff, buf[a]&0x0ff);
@@ -295,33 +389,44 @@ int	main(int argc, char **argv) {
 	for(unsigned i=0, a=7; i<sizeof(tbuf); i++, a += 97) {
 		a &= 126;
 		tb->i2c_read(a, 2, &tbuf[a]);
+
+		//
+		tb->i2c_idle();
+		//
+
 		TBASSERT(*tb, (buf[a  ] == tbuf[a  ]));
 		TBASSERT(*tb, (buf[a+1] == tbuf[a+1]));
 	}
 
-	// Test point 5: Write a new buffer, pairs of addresses at a time
+	// Test point 5: Make sure we haven't changed anything up to this point
+	for(unsigned i=0; i<sizeof(buf); i++) {
+		TBASSERT(*tb, (((buf[i]^(*tb)[i])&0x0ff) == 0));
+	}
+
+	// Test point 6: Write a new buffer, pairs of addresses at a time
 	randomize_buffer(sizeof(buf), buf);
 	printf("\n\nWRITE-TEST\n\n");
 	for(unsigned i=0, a=0; i<sizeof(buf); i++, a += 61*2) {
 		a &= 126;
-		printf("PRE-WRITE[%02x] := %02x:%02x (MEM)\n",
-			a, tb->m_core->v__DOT__mem[a  ]&0x0ff,
-			tb->m_core->v__DOT__mem[a+1]&0x0ff);
+		printf("PRE-WRITE[%02x] := %02x:%02x (MEM)\n", a,
+			(*tb)[a]&0x0ff, (*tb)[a+1]&0x0ff);
 		tb->i2c_write(a, 2, &buf[a]);
+
+		//
+		tb->i2c_idle();
+		//
+
 		// Cheaters test of success here
-		printf("READING FROM ADDR[%02x] := %02x:%02x (MEM) vs %02x:%02x(EXP) [MEM[%02x] = %02x]\n",
-			a, tb->m_core->v__DOT__mem[a  ]&0x0ff,
-			tb->m_core->v__DOT__mem[a+1]&0x0ff,
-			buf[a]&0x0ff, buf[a+1]&0x0ff,
-			2, tb->m_core->v__DOT__mem[2]&0x0ff);
-		TBASSERT(*tb, ((buf[a  ]&0x0ff) == (tb->m_core->v__DOT__mem[a  ]&0x0ff)));
-		TBASSERT(*tb, ((buf[a+1]&0x0ff) == (tb->m_core->v__DOT__mem[a+1]&0x0ff)));
+		printf("READING FROM ADDR[%02x] := %02x:%02x (MEM) vs %02x:%02x(EXP)\n",
+			a, (*tb)[a]&0x0ff, (*tb)[a+1]&0x0ff,
+			buf[a]&0x0ff, buf[a+1]&0x0ff);
+		TBASSERT(*tb, ((buf[a  ]&0x0ff) == ((*tb)[a  ]&0x0ff)));
+		TBASSERT(*tb, ((buf[a+1]&0x0ff) == ((*tb)[a+1]&0x0ff)));
 	} // Read the data back ... the cheaters way
 	for(unsigned i=0; i<sizeof(buf); i++) {
 		printf("TST[%02x]: %02x =?= %02x(EXP)\n", i,
-			(tb->m_core->v__DOT__mem[i]&0x0ff),
-			(buf[i]&0x0ff));
-		TBASSERT(*tb, ((buf[i]&0x0ff) == (tb->m_core->v__DOT__mem[i]&0x0ff)));
+			((*tb)[i]&0x0ff), (buf[i]&0x0ff));
+		TBASSERT(*tb, ((buf[i]&0x0ff) == ((*tb)[i]&0x0ff)));
 	}
 
 	delete	tb;
