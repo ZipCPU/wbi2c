@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename:	wbi2c_tb.cpp
+// Filename:	wbi2cs_tb.cpp
 //
 // Project:	WBI2C ... a set of Wishbone controlled I2C controllers
 //
@@ -58,14 +58,14 @@
 #define	MASTER_WR	0
 #define	MASTER_RD	1
 
-class	I2C_TB : public WB_TB<Vwbi2cslave> {
+class	I2CS_TB : public WB_TB<Vwbi2cslave> {
 public:
-	I2C_TB(void) {
+	I2CS_TB(void) {
 		m_core->i_i2c_sck = 1;
 		m_core->i_i2c_sda = 1;
 	}
 
-	~I2C_TB(void) {}
+	~I2CS_TB(void) {}
 
 	void	reset(void) {
 		// m_flash.debug(false);
@@ -90,26 +90,16 @@ public:
 
 	}
 
-	// Ever since we moved to four separate memories, accessing one
-	// individual memory has gotten a touch tricker.  Let's put all of
-	// that tricky into this one routine.
+	// Internally, the design keeps things in one memory 32-bits wide.
+	// To get at a byte, we need to select which byte from within it.
 	unsigned char operator[](const int addr) const {
-		unsigned char *mem;
-		int av;
+		unsigned int *mem;
+		int	wv;
 
-		av = (addr >> 2) & 0x01f;
-		switch(addr&3) {
-		case 0: mem = m_core->v__DOT__mema;
-			break;
-		case 1: mem = m_core->v__DOT__memb;
-			break;
-		case 2: mem = m_core->v__DOT__memc;
-			break;
-		case 3: default:
-			mem = m_core->v__DOT__memd;
-		}
-
-		return mem[av];
+		mem = m_core->v__DOT__mem;
+		wv = mem[(addr>>2)&0x01f];
+		wv >>= 8*(3-(addr&0x03));
+		return wv & 0x0ff;
 	}
 
 	void	i2c_halfwait(void) {
@@ -313,7 +303,7 @@ void	randomize_buffer(unsigned nc, char *buf) {
 // Notice that the test bench provides no options.  Everything is
 // self-contained.
 void	usage(void) {
-	printf("USAGE: wbi2c_tb\n");
+	printf("USAGE: wbi2cs_tb\n");
 	printf("\n");
 	printf("\t\n");
 }
@@ -322,11 +312,11 @@ void	usage(void) {
 int	main(int argc, char **argv) {
 	// Setup
 	Verilated::commandArgs(argc, argv);
-	I2C_TB	*tb = new I2C_TB();
+	I2CS_TB	*tb = new I2CS_TB();
 	char	buf[128], tbuf[128];
 
 	tb->reset();
-	tb->opentrace("i2c_tb.vcd");
+	tb->opentrace("i2cs_tb.vcd");
 	srand(2);
 
 	randomize_buffer(sizeof(buf), &buf[0]);

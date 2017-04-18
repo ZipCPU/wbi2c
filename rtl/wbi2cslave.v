@@ -62,8 +62,7 @@ module	wbi2cslave(i_clk, i_rst,
 			o_wb_ack, o_wb_stall, o_wb_data,
 		i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda,
 		o_dbg);
-	parameter	INITIAL_MEMA = "", INITIAL_MEMB = "",
-			INITIAL_MEMC = "", INITIAL_MEMD = "";
+	parameter	INITIAL_MEM = "";
 	parameter [0:0]	WB_READ_ONLY = 1'b0;
 	parameter [0:0]	I2C_READ_ONLY = 1'b0;
 	parameter [6:0]	SLAVE_ADDRESS = 7'h50;
@@ -81,21 +80,12 @@ module	wbi2cslave(i_clk, i_rst,
 	//
 	output	wire	[31:0]	o_dbg;
 
-	reg	[7:0]	mema	[0:31];
-	reg	[7:0]	memb	[0:31];
-	reg	[7:0]	memc	[0:31];
-	reg	[7:0]	memd	[0:31];
+	reg	[31:0]	mem	[0:31];
 
 `ifndef	VERILATOR
 	initial begin
-		if (INITIAL_MEMA != "")
-			$readmemh(INITIAL_MEMA, mema);
-		if (INITIAL_MEMB != "")
-			$readmemh(INITIAL_MEMB, memb);
-		if (INITIAL_MEMC != "")
-			$readmemh(INITIAL_MEMC, memc);
-		if (INITIAL_MEMD != "")
-			$readmemh(INITIAL_MEMD, memd);
+		if (INITIAL_MEM != "")
+			$readmemh(INITIAL_MEM, mem);
 	end
 `endif
 
@@ -125,29 +115,19 @@ module	wbi2cslave(i_clk, i_rst,
 	end
 
 	always @(posedge i_clk)
+	begin
 		if (r_we[3])
-			mema[r_addr] <= r_data[31:24];
-
-	always @(posedge i_clk)
+			mem[r_addr][31:24] <= r_data[31:24];
 		if (r_we[2])
-			memb[r_addr] <= r_data[23:16];
-
-	always @(posedge i_clk)
+			mem[r_addr][23:16] <= r_data[23:16];
 		if (r_we[1])
-			memc[r_addr] <= r_data[15: 8];
-
-	always @(posedge i_clk)
+			mem[r_addr][15: 8] <= r_data[15: 8];
 		if (r_we[0])
-			memd[r_addr] <= r_data[ 7: 0];
+			mem[r_addr][ 7: 0] <= r_data[ 7: 0];
+	end
 
 	always @(posedge i_clk)
-		o_wb_data[31:24] <= mema[ i_wb_addr[4:0] ];
-	always @(posedge i_clk)
-		o_wb_data[23:16] <= memb[ i_wb_addr[4:0] ];
-	always @(posedge i_clk)
-		o_wb_data[15: 8] <= memc[ i_wb_addr[4:0] ];
-	always @(posedge i_clk)
-		o_wb_data[ 7: 0] <= memd[ i_wb_addr[4:0] ];
+		o_wb_data <= mem[ i_wb_addr[4:0] ];
 
 	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
@@ -364,20 +344,11 @@ module	wbi2cslave(i_clk, i_rst,
 	assign	wr_data = i2c_rx_byte;
 
 
-	reg	[7:0]	pipe_mema, pipe_memb, pipe_memc, pipe_memd;
+	reg	[31:0]	pipe_mem;
 	reg	[1:0]	pipe_sel;
 	always @(posedge i_clk)
 		if(bus_rd_stb)
-			pipe_mema <= mema[i2c_addr[6:2]];
-	always @(posedge i_clk)
-		if (bus_rd_stb)
-			pipe_memb <= memb[i2c_addr[6:2]];
-	always @(posedge i_clk)
-		if (bus_rd_stb)
-			pipe_memc <= memc[i2c_addr[6:2]];
-	always @(posedge i_clk)
-		if (bus_rd_stb)
-			pipe_memd <= memd[i2c_addr[6:2]];
+			pipe_mem <= mem[i2c_addr[6:2]];
 	always @(posedge i_clk)
 		if (bus_rd_stb)
 			pipe_sel <= i2c_addr[1:0];
@@ -385,10 +356,10 @@ module	wbi2cslave(i_clk, i_rst,
 	//
 	always @(posedge i_clk)
 		case(pipe_sel)
-		2'b00: rd_val <= pipe_mema;
-		2'b01: rd_val <= pipe_memb;
-		2'b10: rd_val <= pipe_memc;
-		2'b11: rd_val <= pipe_memd;
+		2'b00: rd_val <= pipe_mem[31:24];
+		2'b01: rd_val <= pipe_mem[23:16];
+		2'b10: rd_val <= pipe_mem[15: 8];
+		2'b11: rd_val <= pipe_mem[ 7: 0];
 		endcase
 
 	assign	i2c_tx_byte = rd_val;
