@@ -95,8 +95,10 @@ public:
 		if (m_trace) m_trace->dump(10*m_tickcount);
 		m_core->i_clk = 0;
 		eval();
-		if (m_trace) m_trace->dump(10*m_tickcount+5);
-
+		if (m_trace) {
+			m_trace->dump(10*m_tickcount+5);
+			m_trace->flush();
+		}
 	}
 
 	virtual	void	reset(void) {
