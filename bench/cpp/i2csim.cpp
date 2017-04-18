@@ -1,174 +1,239 @@
-#include <stdio.h>
-#include <assert.h>
+////////////////////////////////////////////////////////////////////////////////
+//
+// Filename:	i2csim.cpp
+//
+// Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+//
+// Purpose:	
+//
+// Creator:	Dan Gisselquist, Ph.D.
+//		Gisselquist Technology, LLC
+//
+////////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (C) 2015-2017, Gisselquist Technology, LLC
+//
+// This program is free software (firmware): you can redistribute it and/or
+// modify it under the terms of  the GNU General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or (at
+// your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY or
+// FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+// for more details.
+//
+// You should have received a copy of the GNU General Public License along
+// with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
+// target there if the PDF file isn't present.)  If not, see
+// <http://www.gnu.org/licenses/> for a copy.
+//
+// License:	GPL, v3, as defined and found on www.gnu.org,
+//		http://www.gnu.org/licenses/gpl.html
+//
+//
+////////////////////////////////////////////////////////////////////////////////
+//
+//
+#include "i2csim.h"
 
-class	I2CBUS {
-public:
-	int	m_sck:1;
-	int	m_sda:1;
-	I2CBUS(int sck=1, int sda=1) : m_sck(sck), m_sda(sda) {};
-	I2CBUS	operator+(const I2CBUS b) const {
-		return I2CBUS(m_sck&b.m_sck, m_sda&b.m_sda); }
-};
+I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
+	I2CBUS	r(scl, sda); // Our default result
 
-typedef	enum { I2CIDLE, I2CADDR, I2CSACK, I2CSRX, I2CSTX, I2CMACK, I2CILLEGAL
-} I2CSTATE;
-
-class	I2CSIMSLAVE {
-	char	m_data[128];
-	int	m_addr, m_daddr, m_abits, m_dbits, m_dreg, m_ack,
-			m_last_sda, m_last_sck, m_counter;
-	bool	m_illegal;
-	I2CSTATE	m_state;
-
-	I2CSIMSLAVE(void) {
-		m_last_sda = 1;
-		m_last_sck = 1;
-		for(int i=0; i<128; i++)
-			m_data[i] = 0;
-		m_addr = 0;
-		m_illegal = false;
-		m_state = I2CIDLE;
-	}
-	volatile int	getack(int addr) {
-		m_ack = 0;
-		return m_ack;
-	}
-	volatile char	read(int addr) {
-		m_daddr = addr;
-		return m_data[m_daddr];
-	}
-	volatile char	read(void) {
-		m_daddr = (m_daddr+1)&0x07f;
-		return m_data[m_daddr];
-	}
-	volatile void	write(int addr, char data) {
-		m_daddr = addr & 0x07f;
-		m_data[m_daddr] = data;
-	} volatile void	write(char data) {
-		m_daddr = (m_daddr++) & 0x07f;
-		m_data[m_daddr] = data;
-	}
-	I2CBUS	operator()(int sck, int sda);
-	I2CBUS	operator()(const I2CBUS b) { return (*this)(b.m_sck, b.m_sda); }
-};
-
-/*
-class	I2CSIMMASTER {
-	I2CBUS	operator(int sck, int sda);
-	I2CBUS	operator(const I2CBUS b) { return (*this)(b.m_sck, b.m_sda); }
-};
-
-*/
-
-I2CBUS	I2CSIMSLAVE::operator()(int sck, int sda) {
-	I2CBUS	r(sck, sda); // Our default result
-
-	if ((sck)&&(m_last_sck)&&(sda)&&(!m_last_sda)) {
-		// Stop bit: Low to high transition with sck high
+	if ((scl & m_bus.m_scl)&&(m_last_scl)
+			&&(sda & m_bus.m_sda)&&(!m_last_sda)) {
+		// Stop bit: Low to high transition with scl high
 		// Leave the bus as is
+		printf("START BIT: Setting state to idle\n");
 		m_state = I2CIDLE;
 		m_illegal = false;
-	} else switch(m_state) {
-	case I2CIDLE:
-		if (!sda) {
-			m_state = I2CADDR;
-			m_addr  = 0;
-			m_abits = 0;
-			m_ack   = 1;
-		} else if (!sck) {
-			m_state = I2CILLEGAL;
-		} // The the bus as it was on entry
-		break;
-	case	I2CADDR:
-		if ((sck)&&(!m_last_sck)) {
-			m_addr = (m_addr<<1)|sda;
-			m_abits++;
-			if (m_abits == 8) {
-				m_state = I2CSACK;
-				m_ack = getack(m_addr);
-			} m_counter = 0;
-		} else if (sck) {
-			// Can't change when the clock is high
-			assert(sda == m_last_sda);
-		} // The the bus as it was on entry
-		break;
-	case	I2CSACK:
-		// Ack the master
-		if (!sck)
-			// Master is not allowed to pull the line low
-			assert(r.m_sda);
-		r.m_sda = m_ack;
-		if (m_counter++ < 40000)
-			r.m_sck = 0;
-		if ((!r.m_sck)&&(m_last_sck)) {
-			if (m_addr&1) {
-				m_state = I2CSRX;
-			} else {
-				m_state = I2CSTX;
-				m_dreg = read(m_addr>>1);
-			}
-		} m_dbits = 0;
-		break;
-	case	I2CSRX: {
-		if (r.m_sck) {
-			// Not allowed to change when clock is high
-			if (m_last_sck)
+
+		m_bus.m_scl = m_bus.m_sda = 1;
+	} else {
+		m_bus.m_scl = m_bus.m_sda = 1;
+		switch(m_state) {
+		case I2CIDLE:
+			if (!sda) {
+				m_state = I2CDEVADDR;
+				m_addr  = 0;
+				m_abits = 0;
+				m_ack   = 1;
+				m_dbits = 0;
+			} else if (!scl) {
+				m_state = I2CILLEGAL;
+			} // The the bus as it was on entry
+			break;
+		case	I2CDEVADDR:
+			if ((scl)&&(!m_last_scl)) {
+				m_addr = (m_addr<<1)|sda;
+				m_abits++;
+				if (m_abits == 8) {
+					m_addr &= 0x0ff;
+					if ((m_addr >> 1)==(m_devaddr)) {
+						m_state = I2CDEVACK;
+						m_ack = 0;
+						m_devword = m_addr;
+					} else
+						m_state = I2CLOSTBUS;
+				} m_counter = 0;
+			} else if (scl) {
+				// Can't change when the clock is high
 				assert(sda == m_last_sda);
-			if (!m_last_sck) {
-				m_dreg = ((m_dreg<<1) | r.m_sda)&0x0ff;
-				m_dbits++;
-				if (m_dbits == 8) {
-					m_addr = (m_addr + 2)&0x0ff;
-					// Get an ack from the master
-					m_state = I2CSACK;
-					write(m_addr>>1, m_dreg);
+			} // The the bus as it was on entry
+			break;
+		case	I2CDEVACK:
+			// Ack the master's device request, it's for us.  We
+			// come in here before the negative edge of the last
+			// bit, though
+			if ((m_counter == 0)&&(r.m_scl)) {
+				// Wait for the first negative edge, from the
+				// last bit
+				// printf("Waiting on negative edge before ack\n");
+			} else {
+				m_bus.m_sda = m_ack;
+				if (scl) {
+					// Neither the Master (nor anyone else)
+					// is allowed to pull the line low
+					// during our ack period
+					if (!r.m_sda) {
+						assert(r.m_sda);
+					}
 				}
-			}
-		} break;
-	case	I2CSTX:
-		assert(sda);
-		if (r.m_sck) {
-			// Not allowed to change when clock is high
-			r.m_sda = m_last_sda;
-		} else
-			r.m_sda = m_dreg>>(7-(m_dbits&0x07));
-			if (m_last_sck) {
+				if (m_counter++ < 400) {
+					m_bus.m_scl = 0;
+				} else if ((r.m_scl==0)&&(m_last_scl)) {
+					if (m_devword&1)
+						m_state = I2CSTX;
+					else
+						m_state = I2CADDR;
+					m_abits = 0;
+					m_addr  = 0;
+				}
+			} m_dbits = 0;
+			break;
+		case	I2CADDR:
+			if ((scl)&&(!m_last_scl)) {
+				m_addr = (m_addr<<1)|sda;
+				m_abits++;
+				if (m_abits >= 8) {
+					m_state = I2CSACK;
+					m_ack = getack(m_addr);
+				} m_counter = 0;
+			} else if (scl) {
+				// Can't change when the clock is high
+				assert(sda == m_last_sda);
+			} // The the bus as it was on entry
+			break;
+		case	I2CSACK:
+			// Ack the master
+			m_bus.m_sda = m_ack;
+			if ((m_counter == 0)&&(r.m_scl)) {
+				// Wait for the first negative edge, from the
+				// last bit.
+			} else {
+				if (r.m_scl)
+					// Master is not allowed to pull the
+					// line low, that's our task
+					assert(r.m_sda);
+				m_bus.m_sda = m_ack;
+				// Let's stretch the clock a touch here
+				if (m_counter++ < 400) {
+					m_bus.m_scl = 0;
+				} else if ((!r.m_scl)&&(m_last_scl)) {
+					m_state = I2CSRX;
+				}
+			} m_dbits = 0;
+			break;
+		case	I2CSRX:	// Master is writing to us, we are receiving
+			if (r.m_scl) {
+				// Not allowed to change when clock is high
+				if (m_last_scl)
+					assert(sda == m_last_sda);
+				if (!m_last_scl) {
+					m_dreg = ((m_dreg<<1) | r.m_sda)&0x0ff;
+					m_dbits++;
+					if (m_dbits == 8) {
+						// Get an ack from the master
+						m_state = I2CSACK;
+						write(m_addr, m_dreg);
+						m_addr = (m_addr + 1)&0x07f;
+					}
+				} m_counter = 0;
+			} break;
+		case	I2CSTX: // Master is reading from us, we are txmitting
+			//if (!sda) { // assert(sda); }
+			if ((m_counter == 0)&&(r.m_scl)) {
+			} else if (m_counter++ < 20) {
+				// Wait some time before changing
+			} if (r.m_scl) {
+				// Not allowed to change when clock is high
+				m_bus.m_sda = m_last_sda;
+			} else if (!m_last_scl) {
+				m_bus.m_sda = m_dreg>>(7-(m_dbits&0x07));
+			} else if (m_last_scl) {
 				m_dbits++;
+				m_bus.m_sda = m_last_sda;
 				if (m_dbits == 8) {
-					m_dreg = read();
 					// Get an ack from the master
 					m_state = I2CMACK;
+					m_dbits = 0;
 				}
-			}
-		} break;
-	case	I2CMACK:
-		// Insist that the master actually ACK
-		//
-		// Sadly, we can't.  The master can NAK and ... that's
-		// the end.
-		// Give the master a chance to ACK
-		if ((!r.m_sck)&&(m_last_sck)) {
-			if (!sda) {
-				// master ACK'd.  Go on
-				m_state = I2CSTX;
-				m_dreg = read();
-			} else {
+			} break;
+		case	I2CMACK:
+			// Insist that the master actually ACK
+			//
+			// Sadly, we can't.  The master can NAK and ... that's
+			// the end.
+			// Give the master a chance to ACK
+			if ((!r.m_scl)&&(m_last_scl)) {
+				if (!sda) {
+					// master ACK'd.  Go on
+					m_state = I2CSTX;
+					m_dreg = read();
+				} else {
+					m_state = I2CILLEGAL;
+				}
+			} m_dbits = 0;
+			break;
+		case	I2CLOSTBUS:
+			// Not a problem, but ... someone else is driving the
+			// bus.  We let them respond to the bus
+			m_state = I2CLOSTBUS;
+			break;
+		case	I2CILLEGAL:	// fall through
+		default:
+			m_bus.m_scl = 1;
+			m_bus.m_sda = 1;
+			if (!m_illegal) {
+				fprintf(stderr, "I2C: Illegal state!!\n");
+				m_illegal = true;
 				m_state = I2CILLEGAL;
+				assert(0);
 			}
-		} m_dbits = 0;
-		break;
-	case	I2CILLEGAL:	// fall through
-	default:
-		if (!m_illegal) {
-			fprintf(stderr, "I2C: Illegal state!!\n");
-			m_illegal = true;
-			m_state = I2CILLEGAL;
-		}
-		break;
+			break;
+	}}
+
+//
+	// printf("TICK: SCL,SDA = %d,%d\n", scl, sda);
+	m_tick++;
+	r += m_bus;
+	if ((r.m_scl != m_last_scl)||(r.m_sda != m_last_sda)) {
+		/*
+		if ((m_last_change_tick>0)&&(m_tick - m_last_change_tick < m_speed)) {
+			fprintf(stderr, "ERR-SHORT-CHANGE: ONLY %ld CLOCKS BETWEN CHANGES\n",
+				m_tick-m_last_change_tick);
+			fprintf(stderr, "LAST CHANGE AT %ld TICKS, CHANGING AGAIN AT %ld TICKS\n", m_last_change_tick, m_tick);
+			fprintf(stderr, "LAST-STATE: %d,%d\n", m_last_scl, m_last_sda);
+			fprintf(stderr, "THIS-STATE: %d,%d\n", r.m_scl, r.m_sda);
+			// assert(m_tick - m_last_change_tick >= m_speed);
+		} */
+		m_last_change_tick = m_tick;
 	}
 
-	m_last_sck = r.m_sck;
+	m_last_scl = r.m_scl;
 	m_last_sda = r.m_sda;
+	// printf("TICK: LAST SCL,SDA = %d,%d\n", m_last_scl, m_last_sda);
+
 	return r;
 }
 

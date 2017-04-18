@@ -1,15 +1,13 @@
 ################################################################################
 ##
-## Filename:	Makefile
+## Filename: 	Makefile
 ##
 ## Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
 ##
-## Purpose:	To direct the Verilator build of I2C sources.  The result
-##		is C++ code (built by Verilator), that is then built (herein)
-##	into a library.
-##
-## Targets:	The default target, all, builds the target test, which includes
-##		the libraries necessary for Verilator testing.
+## Purpose:	This is the master Makefile for the project.  It coordinates
+##		the build of a Verilator test, "proving" that this core works
+##	(to the extent that any simulated test "proves" anything).  This
+##	make file depends upon the proper setup of Verilator.
 ##
 ## Creator:	Dan Gisselquist, Ph.D.
 ##		Gisselquist Technology, LLC
@@ -36,35 +34,33 @@
 ## License:	GPL, v3, as defined and found on www.gnu.org,
 ##		http://www.gnu.org/licenses/gpl.html
 ##
+##
 ################################################################################
 ##
 ##
-all:	test
-YYMMDD=`date +%Y%m%d`
-CXX   := g++
-FBDIR := .
-VDIRFB:= $(FBDIR)/obj_dir
+all: rtl bench test
+SUBMAKE := $(MAKE) --no-print-directory -C
+
+.PHONY: doc
+doc:
+	$(SUBMAKE) doc
+
+.PHONY: rtl
+rtl:
+	$(SUBMAKE) rtl
+
+.PHONY: bench
+bench: rtl
+	$(SUBMAKE) bench/cpp
 
 .PHONY: test
-test: $(VDIRFB)/Vwbi2cslave__ALL.a
-test: $(VDIRFB)/Vwbi2cmaster__ALL.a
-
-$(VDIRFB)/Vwbi2cslave__ALL.a: $(VDIRFB)/Vwbi2cslave.h $(VDIRFB)/Vwbi2cslave.cpp
-$(VDIRFB)/Vwbi2cslave__ALL.a: $(VDIRFB)/Vwbi2cslave.mk
-$(VDIRFB)/Vwbi2cslave.h $(VDIRFB)/Vwbi2cslave.cpp $(VDIRFB)/Vwbi2cslave.mk: wbi2cslave.v
-$(VDIRFB)/Vwbi2cmaster__ALL.a: $(VDIRFB)/Vwbi2cmaster.h $(VDIRFB)/Vwbi2cmaster.cpp
-$(VDIRFB)/Vwbi2cmaster__ALL.a: $(VDIRFB)/Vwbi2cmaster.mk
-$(VDIRFB)/Vwbi2cslave.h $(VDIRFB)/Vwbi2cslave.cpp $(VDIRFB)/Vwbi2cslave.mk: wbi2cslave.v
-
-$(VDIRFB)/V%.cpp $(VDIRFB)/V%.h $(VDIRFB)/V%.mk: $(FBDIR)/%.v
-	verilator -cc -trace $*.v 
-
-$(VDIRFB)/Vwbi2cmaster.cpp $(VDIRFB)/Vwbi2cmaster.h $(VDIRFB)/Vwbi2cmaster.mk: wbi2cmaster.v lli2cm.v
-
-$(VDIRFB)/V%__ALL.a: $(VDIRFB)/V%.mk
-	cd $(VDIRFB); make -f V$*.mk
+test: bench
+	$(SUBMAKE) bench/cpp test
 
 .PHONY: clean
 clean:
-	rm -rf $(VDIRFB)/
+	$(SUBMAKE) rtl		clean
+	$(SUBMAKE) bench/cpp	clean
+	$(SUBMAKE) doc		clean
+
 

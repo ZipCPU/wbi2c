@@ -10,8 +10,14 @@
 ##
 ##	Useful targets of this makefile include:
 ##
+##	all
+##		Build the I2C test bench programs
 ##	test
-##	i2c_tb
+##		Run the various I2C tests that are built within here
+##	wbi2cm_tb
+##		Build the test bench for the i2c master
+##	wbi2cs_tb
+##		Build the test bench for the i2c slave
 ##
 ##	clean
 ##		Removes all the products of compilation
@@ -45,7 +51,9 @@
 ################################################################################
 ##
 ##
-all: wbi2c_tb
+all: wbi2cs_tb wbi2cm_tb
+PROGRAMS := wbi2cs_tb wbi2cm_tb
+all: $(PROGRAMS)
 
 CXX	:= g++
 CFLAGS	:= -Wall -Og -g
@@ -56,51 +64,66 @@ VERILATOR_ROOT ?= $(shell bash -c 'verilator -V|grep VERILATOR_ROOT | head -1 | 
 VROOT   := $(VERILATOR_ROOT)
 VINCS	:= -I$(VROOT)/include -I$(VROOT)/include/vltstd
 INCS	:= -I$(RTLOBJD) $(VINCS)
-I2CSRCS := wbi2c_tb.cpp byteswap.cpp
-I2COBJS := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(I2CSRCS)))
-SOURCES := $(I2CSRCS)
+COMNSRC := byteswap.cpp
+I2CSRCS := wbi2cs_tb.cpp
+I2COBJS := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(I2CSRCS) $(COMNSRC)))
+I2CSRCM := wbi2cm_tb.cpp i2csim.cpp
+I2COBJM := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(I2CSRCM) $(COMNSRC)))
+SOURCES := $(I2CSRCS) $(I2CSRCM) $(COMNSRC)
 VLSRCS	:= verilated.cpp verilated_vcd_c.cpp
 VLOBJS  := $(OBJDIR)/verilated.o $(OBJDIR)/verilated_vcd_c.o
 VLIB	:= $(addprefix $(VROOT)/include/,$(VLSRCS))
 LIBS	:= $(RTLOBJD)/Vwbi2cslave__ALL.a
+LIBM	:= $(RTLOBJD)/Vwbi2cmaster__ALL.a
 
 $(OBJDIR)/%.o: %.cpp
+	$(mk-objdir)
 	$(CXX) $(CFLAGS) $(INCS) -c $< -o $@
 
-$(OBJDIR)/%.o: $(ZASM)/%.cpp
-	$(CXX) $(CFLAGS) $(INCS) -c $< -o $@
 
 $(OBJDIR)/%.o: $(VROOT)/include/%.cpp
+	$(mk-objdir)
 	$(CXX) $(CFLAGS) $(INCS) -c $< -o $@
 
-wbi2c_tb: $(I2COBJS) $(VLOBJS) $(RTLOBJD)/Vwbi2cslave__ALL.a
+wbi2cs_tb: $(I2COBJS) $(VLOBJS) $(RTLOBJD)/Vwbi2cslave__ALL.a
 	$(CXX) $(CFLAGS) $(INCS) $(I2COBJS) $(VLOBJS) $(RTLOBJD)/Vwbi2cslave__ALL.a -o $@
+wbi2cm_tb: $(I2COBJM) $(VLOBJS) $(RTLOBJD)/Vwbi2cmaster__ALL.a
+	$(CXX) $(CFLAGS) $(INCS) $(I2COBJM) $(VLOBJS) $(RTLOBJD)/Vwbi2cmaster__ALL.a -o $@
 
 .PHONY: test
-test: wbi2c_tb
-	./wbi2c_tb
+test: wbi2cs_tbtest wbi2cm_tbtest
+
+.PHONY: wbi2cs_tbtest
+wbi2cs_tbtest: wbi2cs_tb
+	./wbi2cs_tb
+
+.PHONY: wbi2cm_tbtest
+wbi2cm_tbtest: wbi2cm_tb
+	./wbi2cm_tb
+
+define	mk-objdir
+	@bash -c "if [ ! -e $(OBJDIR) ]; then mkdir -p $(OBJDIR); fi"
+endef
 
 define	build-depends
 	@echo "Building dependencies"
-	@$(CXX) $(CPPFLAGS) $(INCS) -MM $(VLIB) $(SOURCES) > $(OBJDIR)/xdepends.txt
-	@sed -e 's/^.*.o: /$(OBJDIR)\/&/' < $(OBJDIR)/xdepends.txt > $(OBJDIR)/depends.txt
-	@rm $(OBJDIR)/xdepends.txt
+	@$(CXX) $(CPPFLAGS) $(INCS) -MM $(VLIB) $(SOURCES) > $(OBJDIR)/xdep.txt
+	@sed -e 's/^.*.o: /$(OBJDIR)\/&/' < $(OBJDIR)/xdep.txt > $(OBJDIR)/depends.txt
+	@rm $(OBJDIR)/xdep.txt
 endef
 
-tags: $(VLIB) $(SOURCES)
-	@ctags $(SOURCES) $(VLIB)
+tags: $(VLIB) $(SOURCES) $(HEADERS)
+	@ctags $(SOURCES) $(HEADERS) $(VLIB)
 
 .PHONY: depends
-depends: tags $(OBJDIR)/
+depends: tags
+	$(mk-objdir)
 	$(build-depends)
 
-$(OBJDIR)/:
-	@bash -c "if [ ! -e $(OBJDIR) ]; then mkdir -p $(OBJDIR)/; fi"
-
-$(OBJDIR)/depends.txt: $(OBJDIR)/ depends
+$(OBJDIR)/depends.txt: $(SOURCES) $(HEADERS)
 
 .PHONY: clean
 clean:
-	rm -rf $(OBJDIR)/ ./wbi2c_tb *.vcd
+	rm -rf $(OBJDIR)/ $(PROGRAMS)
 
 -include $(OBJDIR)/depends.txt
