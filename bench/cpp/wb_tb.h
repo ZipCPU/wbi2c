@@ -195,7 +195,7 @@ public:
 		TESTB<VA>::m_core->i_wb_stb = 0;
 
 		if(errcount >= BOMBCOUNT) {
-			printf("WB/SW-BOMB: NO RESPONSE AFTER %d CLOCKS (LINE=%d, count=%d)\n",__LINE__, errcount);
+			printf("WB/SW-BOMB: NO RESPONSE AFTER %d CLOCKS (LINE=%d)\n", errcount, __LINE__);
 			m_bomb = true;
 		} TICK();
 		assert(!TESTB<VA>::m_core->o_wb_ack);
