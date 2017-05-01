@@ -53,14 +53,14 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 		m_bus.m_scl = m_bus.m_sda = 1;
 		switch(m_state) {
 		case I2CIDLE:
-			if (!sda) {
+			if (!scl) {
+				m_state = I2CILLEGAL;
+			} else if (!sda) {
 				m_state = I2CDEVADDR;
 				m_addr  = 0;
 				m_abits = 0;
 				m_ack   = 1;
 				m_dbits = 0;
-			} else if (!scl) {
-				m_state = I2CILLEGAL;
 			} // The the bus as it was on entry
 			break;
 		case	I2CDEVADDR:
@@ -126,11 +126,11 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 			break;
 		case	I2CSACK:
 			// Ack the master
-			m_bus.m_sda = m_ack;
 			if ((m_counter == 0)&&(r.m_scl)) {
 				// Wait for the first negative edge, from the
 				// last bit.
 			} else {
+				m_bus.m_sda = m_ack;
 				if (r.m_scl)
 					// Master is not allowed to pull the
 					// line low, that's our task
