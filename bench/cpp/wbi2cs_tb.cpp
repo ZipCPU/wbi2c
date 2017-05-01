@@ -118,7 +118,7 @@ public:
 	}
 
 	void	i2c_start() {
-		printf("I2C-START\n");
+		// printf("I2C-START\n");
 		TBASSERT(*this, ((SCK)&&(SDA)));
 		SDA = 0;
 		i2c_halfwait();
@@ -127,7 +127,7 @@ public:
 	}
 
 	void	i2c_repeat_start() {
-		printf("I2C-REPEAT-START\n");
+		// printf("I2C-REPEAT-START\n");
 		TBASSERT(*this, (!SCK));
 		SDA = 1;
 		i2c_halfwait();
@@ -142,7 +142,7 @@ public:
 		i2c_halfwait();
 		SDA = 1;
 		i2c_halfwait();
-		printf("I2C-STOP\n");
+		// printf("I2C-STOP\n");
 	}
 
 	int	i2c_rxbit(void) {
@@ -160,7 +160,7 @@ public:
 		i2c_halfwait();
 		TBASSERT(*this, (!SCK));
 
-printf("I2C-RX: %d\n", r);
+		// printf("I2C-RX: %d\n", r);
 		return r;
 	}
 
@@ -182,7 +182,7 @@ printf("I2C-RX: %d\n", r);
 		for(int i=0; i<8; i++) {
 			i2c_txbit((tx>>7)&1);
 			tx <<= 1;
-		} printf("TRANSMITTED %02x\n", b);
+		} // printf("TRANSMITTED %02x\n", b);
 	}
 
 	int	i2c_rxbyte(void) {
@@ -190,7 +190,7 @@ printf("I2C-RX: %d\n", r);
 		for(int i=0; i<8; i++) {
 			b = (b<<1) | i2c_rxbit();
 		}
-printf("I2C-READ: %02x\n", b);
+		// printf("I2C-READ: %02x\n", b);
 		return b;
 	}
 
@@ -201,8 +201,8 @@ printf("I2C-READ: %02x\n", b);
 		if (cnt == 0)
 			return;
 
-		printf("I2C_READ(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
-			slave_addr, addr, cnt);
+		// printf("I2C_READ(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
+		//	slave_addr, addr, cnt);
 
 		slave_addr <<= 1;
 		i2c_start();
@@ -210,12 +210,12 @@ printf("I2C-READ: %02x\n", b);
 		// First, set the address
 		i2c_txbyte((slave_addr&0xfe)|MASTER_WR);//Master is sending data
 		ack = i2c_rxbit();	// (i.e., the address to rd from)
-		printf("RXACK = %d\n", ack);
+		// printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
 
 		i2c_txbyte(addr);	// Address we wish to read from
 		ack = i2c_rxbit();
-		printf("RXACK = %d\n", ack);
+		// printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
 
 		i2c_repeat_start();
@@ -224,13 +224,13 @@ printf("I2C-READ: %02x\n", b);
 		// Then, read the data
 		i2c_txbyte((slave_addr&0xfe)|MASTER_RD); // Request data
 		ack = i2c_rxbit();
-		printf("RXACK = %d\n", ack);
+		// printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
 
 		for(unsigned i=0; i<cnt-1; i++) {
 			buf[i] = i2c_rxbyte();
 			i2c_txbit(0);
-			printf("TX-ACK SENT\n");
+			// printf("TX-ACK SENT\n");
 		}
 
 		buf[cnt-1] = i2c_rxbyte();
@@ -250,26 +250,26 @@ printf("I2C-READ: %02x\n", b);
 			const unsigned cnt, const char *buf) {
 		int	ack;
 
-		printf("I2C_WRITE(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
-			slave_addr, addr, cnt);
+		// printf("I2C_WRITE(SLV=%02x, ADR=%02x, CNT=%d,...)\n",
+		//	slave_addr, addr, cnt);
 
 		slave_addr <<= 1;
 		i2c_start();
 
 		i2c_txbyte((slave_addr&0xfe)|MASTER_WR);
 		ack = i2c_rxbit();
-		printf("RXACK = %d\n", ack);
+		// printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
 
 		i2c_txbyte(addr);
 		ack = i2c_rxbit();
-		printf("RXACK = %d\n", ack);
+		// printf("RXACK = %d\n", ack);
 		TBASSERT(*this, (ack==0));
 
 		for(unsigned i=0; i<cnt; i++) {
 			i2c_txbyte(buf[i] & 0xff);
 			ack = i2c_rxbit();
-			printf("RXACK = %d\n", ack);
+			// printf("RXACK = %d\n", ack);
 			TBASSERT(*this, (ack==0));
 		}
 
@@ -283,13 +283,13 @@ printf("I2C-READ: %02x\n", b);
 };
 
 void	randomize_buffer(unsigned nc, char *buf) {
-	if (false) {
+	if (true) {
 		const char	*fname = "/dev/urandom";
 		FILE	*fp = fopen(fname, "r");
-		int	nr;
+		unsigned	nr;
 		assert(fp);
 		nr = fread(buf, sizeof(char), nc, fp);
-		assert(nr == sizeof(buf));
+		assert(nr == nc);
 		fclose(fp);
 	} else {
 		for(unsigned i=0; i<nc; i++)
@@ -407,7 +407,7 @@ int	main(int argc, char **argv) {
 		//
 
 		// Cheaters test of success here
-		printf("READING FROM ADDR[%02x] := %02x:%02x (MEM) vs %02x:%02x(EXP)\n",
+		printf("   READING FROM ADDR[%02x] := %02x:%02x (MEM) vs %02x:%02x(EXP)\n",
 			a, (*tb)[a]&0x0ff, (*tb)[a+1]&0x0ff,
 			buf[a]&0x0ff, buf[a+1]&0x0ff);
 		TBASSERT(*tb, ((buf[a  ]&0x0ff) == ((*tb)[a  ]&0x0ff)));
