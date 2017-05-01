@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename: 	i2cslave.v
+// Filename: 	wbi2cslave.v
 //
 // Project:	WBI2C ... a set of Wishbone controlled I2C controllers
 //
@@ -101,9 +101,9 @@ module	wbi2cslave(i_clk, i_rst,
 	begin
 		if (!READ_ONLY)
 		begin
-			if (wr_stb[4])
+			if ((!I2C_READ_ONLY)&&(wr_stb[4]))
 				r_we <= wr_stb[3:0];
-			else if ((i_wb_stb)&&(i_wb_we))
+			else if ((!WB_READ_ONLY)&&(i_wb_stb)&&(i_wb_we))
 				r_we <= i_wb_sel;
 			else
 				r_we <= 4'h0;
@@ -116,14 +116,17 @@ module	wbi2cslave(i_clk, i_rst,
 
 	always @(posedge i_clk)
 	begin
-		if (r_we[3])
-			mem[r_addr][31:24] <= r_data[31:24];
-		if (r_we[2])
-			mem[r_addr][23:16] <= r_data[23:16];
-		if (r_we[1])
-			mem[r_addr][15: 8] <= r_data[15: 8];
-		if (r_we[0])
-			mem[r_addr][ 7: 0] <= r_data[ 7: 0];
+		if (!READ_ONLY)
+		begin
+			if (r_we[3])
+				mem[r_addr][31:24] <= r_data[31:24];
+			if (r_we[2])
+				mem[r_addr][23:16] <= r_data[23:16];
+			if (r_we[1])
+				mem[r_addr][15: 8] <= r_data[15: 8];
+			if (r_we[0])
+				mem[r_addr][ 7: 0] <= r_data[ 7: 0];
+		end
 	end
 
 	always @(posedge i_clk)
@@ -133,7 +136,7 @@ module	wbi2cslave(i_clk, i_rst,
 	always @(posedge i_clk)
 		o_wb_ack <= (i_wb_stb)&&(!o_wb_stall);
 
-	assign	o_wb_stall = (wr_stb[4]);
+	assign	o_wb_stall = (!READ_ONLY)&&(wr_stb[4]);
 
 	//
 	//
@@ -300,7 +303,7 @@ module	wbi2cslave(i_clk, i_rst,
 				begin
 					// Reading from the bus means we are
 					// writing to memory
-					bus_wr_stb <= 1'b1;
+					bus_wr_stb <= (!I2C_READ_ONLY);
 				end
 				// Increment the address once a write completes
 				// if (wr_complete)
@@ -334,11 +337,14 @@ module	wbi2cslave(i_clk, i_rst,
 	initial	wr_stb = 5'b0;
 	always @(posedge i_clk)
 	begin
-		wr_stb[4]  <= bus_wr_stb;
-		wr_stb[3]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b00);
-		wr_stb[2]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b01);
-		wr_stb[1]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b10);
-		wr_stb[0]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b11);
+		if (!I2C_READ_ONLY)
+		begin
+			wr_stb[4]  <= bus_wr_stb;
+			wr_stb[3]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b00);
+			wr_stb[2]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b01);
+			wr_stb[1]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b10);
+			wr_stb[0]  <= (bus_wr_stb)&&(i2c_addr[1:0]==2'b11);
+		end
 	end
 
 	assign	wr_data = i2c_rx_byte;
