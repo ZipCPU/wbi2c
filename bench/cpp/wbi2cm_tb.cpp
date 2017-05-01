@@ -72,6 +72,8 @@
 #define	READCMD(DEV,ADDR,CNT)	(GENCMD(DEV,ADDR,CNT)|(MASTER_RD<<16))
 #define	WRITECMD(DEV,ADDR,CNT)	(GENCMD(DEV,ADDR,CNT))
 
+#define	TESTBREAK	for(int i=0; i<I2CSPEED * 1000; i++) tb->tick()
+
 class	I2CM_TB : public WB_TB<Vwbi2cmaster> {
 	I2CSIMSLAVE	m_slave;
 public:
@@ -152,6 +154,8 @@ int	main(int argc, char **argv) {
 	Verilated::commandArgs(argc, argv);
 	I2CM_TB	*tb = new I2CM_TB();
 	char	buf[128], tbuf[128];
+	unsigned	addr, pre, post, wbaddr, rval;
+	unsigned long	prel, postl, rvall;
 
 	tb->reset();
 	tb->opentrace("i2cm_tb.vcd");
@@ -169,8 +173,8 @@ int	main(int argc, char **argv) {
 	//
 	//
 	//
-	// Test point 1 : check that what we've written to the controller is
-	// what we can read back.
+	// Test point 1 : check that what we've written to the controller (WB)
+	// is what we can read back (WB).
 	tb->wb_read(R_MEM, (unsigned)sizeof(buf)/4, (unsigned *)tbuf);
 	for(unsigned i=0; i<sizeof(buf); i++)
 		TBASSERT(*tb, (buf[i] == tbuf[i]));
@@ -187,29 +191,35 @@ int	main(int argc, char **argv) {
 		}
 	}
 
-	//
-	//
-	//
-	//
-	//
-	//
-	//
-	//
-	// Now, let's randomize our buffer again, and set the slaves data
-	randomize_buffer(sizeof(buf), &buf[0]);
+	TESTBREAK;
 
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	// Now, let's write our local data to the slave via I2C, and verify that
+	// the slave gets the right answer
 	tb->wb_write(R_CMD, WRITECMD(SLAVE_ADDRESS,0,64));
 	tb->tick();
 	tb->tick();
 	{
 		bool	busy = true;
+		unsigned	status, o_int;
 
+		// Give the interface a couple ticks to get going
 		tb->tick();
 		tb->tick();
 
+		// Now wait while the interface is busy
 		do {
-			unsigned	status, o_int;
 
+			// Check the 'int' line before checking if we are busy,
+			// being aware that 'int' can become true as the bus
+			// read completes, but before the data has been read
 			o_int = tb->m_core->o_int;
 			status = tb->wb_read(R_CMD);
 			busy = ((status >> 31)&1)?true:false;
@@ -221,8 +231,16 @@ int	main(int argc, char **argv) {
 			}
 			TBASSERT(*tb, (0 == ((status >> 30)&1)));
 		} while(busy);
+
+		status = tb->wb_read(R_CMD);
+		// printf("WRITE-COMPLETE, STATUS = %08x\n", status);
+		// printf("EXPECTED STATUS        = %08x\n", WRITECMD(SLAVE_ADDRESS, 64, 0));
+		TBASSERT(*tb, (status == WRITECMD(SLAVE_ADDRESS,64,0)));
 	}
 
+	// Now, let's the data memory from the master device back into memory
+	// using WB, and then comare it against what the slave says it has
+	// by accessing the slave's memory directly
 	tb->wb_read(R_MEM, (unsigned)sizeof(buf)/4, (unsigned *)tbuf);
 	for(unsigned i=0; i<20; i++) {
 		int	adr = i & -4;
@@ -235,10 +253,14 @@ int	main(int argc, char **argv) {
 		int	adr = i & -4;
 		adr |= 3-(i&3);
 		printf("COMPARING[%3d] 0x%02x RCV to 0x%02x SLV\n", i,
-			tbuf[adr] & 0x0ff,
-			tb->slave()[i] & 0x0ff);
-		TBASSERT(*tb, ((tbuf[adr]&0x0ff) == (tb->slave()[i]&0x0ff)));
+			tbuf[adr] & 0x0ff, tb->slave()[i] & 0x0ff);
+		if (0 != ((tbuf[adr]^tb->slave()[i])&0x0ff)) {
+			TBASSERT(*tb, ((tbuf[adr]&0x0ff) == (tb->slave()[i]&0x0ff)));
+		}
 	}
+
+
+	TESTBREAK;
 
 	//
 	//
@@ -254,11 +276,18 @@ int	main(int argc, char **argv) {
 	tb->tick();
 	tb->tick();
 	{
-		bool	busy = true;
+		bool		busy = true;
+		unsigned	status;
+
 		do {
 			tb->tick();
 			busy = (0 == tb->m_core->o_int);
 		} while(busy);
+
+		status = tb->wb_read(R_CMD);
+		// printf("WRITE-COMPLETE, STATUS = %08x\n", status);
+		// printf("EXPECTED STATUS        = %08x\n", WRITECMD(SLAVE_ADDRESS, 0, 0));
+		TBASSERT(*tb, (status == WRITECMD(SLAVE_ADDRESS,0,0)));
 	}
 
 	tb->wb_read(R_MEM+(64>>2), (unsigned)sizeof(buf)/4, (unsigned *)tbuf);
@@ -277,6 +306,9 @@ int	main(int argc, char **argv) {
 			tb->slave()[64+i] & 0x0ff);
 		TBASSERT(*tb, ((tbuf[adr]&0x0ff) == (tb->slave()[64+i]&0x0ff)));
 	}
+
+	TESTBREAK;
+
 
 	//
 	//
@@ -319,12 +351,151 @@ int	main(int argc, char **argv) {
 		}
 	}
 
+	TESTBREAK;
+
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	// Now let's try random access reading
+	printf("\n\nNext test: Reads from random I2C addresses\n\n\n");
+	// Randomize the buffer
+	randomize_buffer(sizeof(buf), &buf[0]);
+	// We'll fill the slave's buffer with these values
+	for(unsigned i=0; i<128; i++) {
+		tb->slave()[i] = buf[i];
+	}
+	// Now, let's read one byte from the slave at a time, in a pseudo-random
+	// order, and see if we read the proper byte from the slave
+	for(unsigned i=0; i<128; i++) {
+		addr = (i * 23) & 127;
+		wbaddr = (addr >> 2);
+		pre = tb->wb_read(R_MEM + wbaddr);
+		// printf("PREV[%02x] = %08x\n", wbaddr, pre);
+
+		tb->wb_write(R_CMD, READCMD(SLAVE_ADDRESS,addr,1));
+		tb->tick();
+		tb->tick();
+		while(0 == tb->m_core->o_int) {
+			tb->tick();
+		}
+
+		{ unsigned status, expected_status;
+		status = tb->wb_read(R_CMD);
+		expected_status = WRITECMD(SLAVE_ADDRESS, ((addr+1)&0x7f), 0);
+		// printf("WRITE-COMPLETE, STATUS = %08x\n", status);
+		// printf("EXPECTED STATUS        = %08x\n", expected_status);
+		TBASSERT(*tb, (status == expected_status));
+		}
+
+		post = tb->wb_read(R_MEM+ wbaddr);
+		// printf("POST[%02x] = %08x\n", wbaddr, post);
+		if (pre != post) {
+			unsigned msk;
+			msk = (0x0ff)<<((3-(addr&3))*8);
+			// Assert that nothing but our data changes
+			if (((pre^post)&(~msk))!=0) {
+				fprintf(stderr, "1. SINGLE-TEST, Wrong data changed, ADDR=%02x, PRE=%08x, POST=%08x\n", addr, pre, post);
+				goto test_failure;
+			}
+		}
+
+		rval = buf[addr] & 0x0ff;
+		rvall= (post >> ((3-(addr&3))*8))&0x0ff;
+		if (rval != rvall) {
+			fprintf(stderr, "2. ERR, EXPECTED TO READ %02x from %02x, GOT %02x\n",
+				rval, addr, (unsigned)rvall);
+			fprintf(stderr, "SLAVE[%02x] = %02x\n", addr,
+				buf[addr] & 0x0ff);
+			goto test_failure;
+		}
+	}
+
+	TESTBREAK;
+
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	//
+	// Now let's try random access reading, but two at a time this time.
+	// We're not even going to guarantee alignment
+	//
+	printf("\n\nNext test: Reads from random I2C addresses, 2x at a time\n\n\n");
+	// Randomize the buffer (again)
+	randomize_buffer(sizeof(buf), &buf[0]);
+	// We'll fill the slave's buffer with these values
+	for(unsigned i=0; i<128; i++) {
+		// Set the data ... the cheaters way that can only be done on a
+		// test bench
+		tb->slave()[i] = buf[i];
+	}
+	// Now, let's read one byte from the slave at a time, in a pseudo-random
+	// order, and see if we read the proper byte from the slave
+	for(unsigned i=0; i<128; i++) {
+		addr = (i * 31) & 127;
+		wbaddr = addr >> 2;
+		prel = tb->wb_read(R_MEM + wbaddr);
+		prel = (prel<<32) | tb->wb_read(R_MEM + ((wbaddr+1)&0x01f));
+		// printf("PREL=%016lx\n", prel);
+
+		tb->wb_write(R_CMD, READCMD(SLAVE_ADDRESS,addr,2));
+		tb->tick();
+		tb->tick();
+		while(0 == tb->m_core->o_int) {
+			tb->tick();
+		}
+
+		{ unsigned status, expected_status;
+		status = tb->wb_read(R_CMD);
+		expected_status = WRITECMD(SLAVE_ADDRESS, ((addr+2)&0x07f), 0);
+		// printf("WRITE-COMPLETE, STATUS = %08x\n", status);
+		// printf("EXPECTED STATUS        = %08x\n", expected_status);
+		TBASSERT(*tb, (status == expected_status));
+		}
+
+		postl = tb->wb_read(R_MEM + wbaddr);
+		postl = (postl<<32)|tb->wb_read(R_MEM + ((wbaddr+1)&0x01f));
+		if (pre != post) {
+			unsigned long msk;
+			msk = (0x0ffffl)<<(24+(3-(addr&3))*8);
+			// Assert that nothing but our data changes
+			if (((prel^postl)&(~msk))!=0) {
+				fprintf(stderr, "3. DBL-TEST, Wrong data changed, ADDR=%02x, PRE=%016lx, POST=%016lx\n", addr, prel, postl);
+				fprintf(stderr, "PRE = %016lx\n", prel);
+				fprintf(stderr, "POST= %016lx\n", postl);
+				goto test_failure;
+			}
+		}
+
+		rval  = ((buf[addr] << 8) | (buf[(addr+1)&127]&0x0ff)) & 0x0ffff;
+		rvall = ((postl >> (24+(3-(addr&3))*8))&0x0ffffl);
+		if (rvall != rval) {
+			fprintf(stderr, "4. ERR, EXPECTED TO READ %04x from %02x+1, GOT %04lx\n",
+				rval, addr, rvall);
+			fprintf(stderr, "PRE = %016lx\n", prel);
+			fprintf(stderr, "POST= %016lx\n", postl);
+			goto test_failure;
+		}
+	}
 
 
 	delete	tb;
 
 	// And declare success
-	printf("SUCCESS!\n");
+	printf("PASS\n");
 	exit(EXIT_SUCCESS);
+
+test_failure:
+	delete	tb;
+	printf("FAIL\n");
+	exit(EXIT_FAILURE);
 }
 

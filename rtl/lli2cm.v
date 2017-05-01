@@ -90,13 +90,60 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 	reg	[2:0]	nbits;
 	reg	[7:0]	r_data;
 
+	// Synchronize any asynchronous inputs
+	reg	q_scl, q_sda, ck_scl, ck_sda, lst_scl, lst_sda;
+	initial	q_scl   = 1'b1;
+	initial	q_sda   = 1'b1;
+	initial	ck_scl  = 1'b1;
+	initial	ck_sda  = 1'b1;
+	initial	lst_scl = 1'b1;
+	initial	lst_sda = 1'b1;
+	always @(posedge i_clk)
+	begin
+		q_scl   <= i_scl;
+		ck_scl  <= q_scl;
+		lst_scl <= ck_scl;
+
+		q_sda   <= i_sda;
+		ck_sda  <= q_sda;
+		lst_sda <= ck_sda;
+	end
+
+	reg	start_bit, stop_bit, channel_busy;
+	initial	start_bit = 1'b0;
+	initial	stop_bit  = 1'b0;
+	initial	channel_busy = 1'b0;
+	always @(posedge i_clk)
+	begin
+		start_bit <= (ck_scl)&&(lst_scl)&&(!ck_sda)&&( lst_sda);
+		stop_bit  <= (ck_scl)&&(lst_scl)&&( ck_sda)&&(!lst_sda);
+		if ((!ck_scl)||(!ck_sda))
+			channel_busy <= 1'b1;
+		else if (stop_bit)
+			channel_busy <= 1'b0;
+	end
+
+	reg		watchdog_timeout;
+	reg	[27:0]	watchdog;
+	always @(posedge i_clk)
+	begin
+		if (!channel_busy)
+			watchdog <= 0;
+		else if (!(&watchdog))
+			watchdog <= watchdog + 1'b1;
+		watchdog_timeout <= (&watchdog);
+	end
 
 	initial	clock = CLOCKS_PER_TICK;
 	initial	zclk  = 1'b1;
 	always @(posedge i_clk)
 		if (state == `I2CMIDLE)
 		begin
-			if ((i_stb)&&(!o_busy))
+			if (watchdog_timeout)
+			begin
+				clock <= 0;
+				zclk  <= 1'b1;
+			end else if (((i_stb)&&(!o_busy))||(channel_busy))
 			begin
 				clock <= clocks_per_tick;
 				zclk  <= 1'b0;
@@ -104,7 +151,7 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 				clock <= 0;
 				zclk  <= 1'b1;
 			end
-		end else if ((clock == 0)||(o_scl)&&(!i_scl))
+		end else if ((clock == 0)||((o_scl)&&(!ck_scl)))
 		begin
 			clock <= clocks_per_tick;
 			zclk <= 1'b0;
@@ -133,35 +180,43 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 				r_err <= 1'b0;
 				nbits <= 3'h0;
 				r_cyc <= i_cyc;
+				o_sda <= 1'b1;
+				o_scl <= 1'b1;
 				if ((i_stb)&&(!o_busy)) begin
 					r_data <= i_data;
 					r_we   <= i_we; 
 					nbits  <= 0;
 					state  <= `I2CMSTART;
 					o_sda  <= 1'b0;
+				end else if (watchdog_timeout)
+				begin
+					o_sda <= 1'b0;
+					o_scl <= 1'b0;
+					state  <= `I2CMSTOP;
 				end else
 					o_busy <= 1'b0;
 			    end
 			`I2CMSTART: begin
 				state <= `I2CMBIT_SET;
+				o_sda <= 1'b0;
 				o_scl <= 1'b0;
 			    end
 			`I2CMBIT_SET: begin
 				o_sda <= (r_we)?r_data[7] : 1'b1;
 				if (r_we)
-					r_data <= { r_data[6:0], i_sda };
+					r_data <= { r_data[6:0], ck_sda };
 				nbits <= nbits - 1'b1;
 				state <= `I2CMBIT_POSEDGE;
 				end
 			`I2CMBIT_POSEDGE: begin
 				if (!r_we)
-					r_data <= { r_data[6:0], i_sda };
+					r_data <= { r_data[6:0], ck_sda };
 				o_scl <= 1'b1;
-				r_err <= (r_err)||((r_we)&&(o_sda != i_sda));
+				r_err <= (r_err)||((r_we)&&(o_sda != ck_sda));
 				state <= `I2CMBIT_NEGEDGE;
 				end
 			`I2CMBIT_NEGEDGE: begin
-				if (i_scl)
+				if (ck_scl)
 				    begin
 					o_scl <= 1'b0;
 					state <= `I2CMBIT_CLR;
@@ -170,6 +225,8 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 			`I2CMBIT_CLR: begin
 				if (nbits != 3'h0)
 					state <= `I2CMBIT_SET;
+				else if ((!r_we)&&((!i_stb)||(!r_cyc)))
+					state <= `I2CMSTOP;
 				else
 					state <= `I2CMACK_SET;
 				end
@@ -182,10 +239,10 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 					state <= `I2CMACK_NEGEDGE;
 				end
 			`I2CMACK_NEGEDGE: begin
-					if (i_scl)
+					if (ck_scl)
 					begin
 						o_scl <= 1'b0;
-						r_err <= (r_err)||((r_we)&&(i_sda));
+						r_err <= (r_err)||((r_we)&&(ck_sda));
 						state <= `I2CMACK_CLR;
 					end
 				end
@@ -224,30 +281,46 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 			`I2CMRESTART_NEGEDGE: begin
 				o_sda <= 1'b1;
 				o_scl <= 1'b1;
-				if (i_scl)
+				if (ck_scl)
 				  begin
 					state <= `I2CMSTART;
 					o_sda <= 1'b0;
 				  end
 				end
 			`I2CMSTOP: begin
-				o_scl <= 1'b1;
-				o_sda <= 1'b0; // (No change)
-				state <= `I2CMSTOPPD;
+				o_scl <= 1'b0;
+				o_sda <= 1'b0;
+				if ((ck_scl == 1'b0)&&(ck_sda == 1'b0))
+				begin
+					o_scl <= 1'b1;
+					o_sda <= 1'b0; // (No change)
+					state <= `I2CMSTOPPD;
+				end
 				end
 			`I2CMSTOPPD: begin
 				o_scl <= 1'b1;
-				o_sda <= 1'b1;
-				state <= `I2CMFINAL;
+				o_sda <= 1'b0;
+				if ((ck_scl)&&(!ck_sda))
+				begin
+					o_sda <= 1'b1;
+					state <= `I2CMFINAL;
+				end
 				end
 			default: begin
 				o_scl <= 1'b1;
 				o_sda <= 1'b1;
-				state <= `I2CMIDLE;
+				if (!channel_busy)
+					state <= `I2CMIDLE;
+				else if (watchdog_timeout)
+					state <= `I2CMSTOP;
 				end
 		endcase
 	end
 
-	assign	o_dbg = { i_cyc, 27'h00, i_scl, i_sda, o_scl, o_sda };
+	assign	o_dbg = { i_cyc, i_cyc, i_stb, 13'h00,
+		1'b0, watchdog_timeout, o_ack, o_busy,
+		o_err, stop_bit, start_bit, channel_busy,
+		state,
+		ck_scl, ck_sda, o_scl, o_sda };
 
 endmodule

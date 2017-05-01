@@ -102,8 +102,11 @@ module	wbi2cmaster(i_clk, i_rst,
 		i_wb_cyc, i_wb_stb, i_wb_we, i_wb_addr, i_wb_data, i_wb_sel,
 			o_wb_ack, o_wb_stall, o_wb_data,
 		i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda, o_int,
-		i_vstate,
-		o_dbg);
+		o_dbg
+`ifdef	VERILATOR
+		, i_vstate
+`endif
+		);
 	parameter [0:0]	CONSTANT_SPEED = 1'b0, READ_ONLY = 1'b0;
 	parameter [5:0]	TICKBITS = 6'd20;
 	parameter [(TICKBITS-1):0]	CLOCKS_PER_TICK = 20'd1000;
@@ -123,8 +126,10 @@ module	wbi2cmaster(i_clk, i_rst,
 	// And our output interrupt
 	output	wire		o_int;
 	// And some debug wires
-	input	wire	[31:0]	i_vstate;
 	output	wire	[31:0]	o_dbg;
+`ifdef	VERILATOR
+	input	wire	[31:0]	i_vstate;
+`endif
 
 
 
@@ -136,6 +141,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	// r_speed ... the programmable number of system clocks per I2C
 	// wait state.  Nominally, this is one quarter the clock speed of the
 	// I2C.
+	reg				zero_speed_err;
 	reg	[(TICKBITS-1):0]	r_speed;
 
 	// Parameters used to control and read values from the lower level
@@ -144,13 +150,14 @@ module	wbi2cmaster(i_clk, i_rst,
 	reg	[7:0]	ll_i2c_tx_data;
 	wire		ll_i2c_ack, ll_i2c_stall, ll_i2c_err;
 	wire	[7:0]	ll_i2c_rx_data;
+	wire	[31:0]	ll_dbg;
 	//
 	// The lower level module we are trying to drive
 	//
 	lli2cm lowlvl(i_clk, r_speed, ll_i2c_cyc, ll_i2c_stb, ll_i2c_we,
 				ll_i2c_tx_data,
 			ll_i2c_ack, ll_i2c_stall, ll_i2c_err, ll_i2c_rx_data,
-			i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda, o_dbg);
+			i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda, ll_dbg);
 
 
 	//
@@ -180,6 +187,8 @@ module	wbi2cmaster(i_clk, i_rst,
 	initial	newrx_txn = 1'b0;
 	initial	newadr    = 7'h0;
 	initial	newcnt    = 7'h0;
+	initial	r_speed   = CLOCKS_PER_TICK;
+	initial	zero_speed_err = 1'b0;
 	always @(posedge i_clk)
 	begin	// Writes from the master wishbone bus
 		start_request <= 1'b0;
@@ -198,7 +207,9 @@ module	wbi2cmaster(i_clk, i_rst,
 
 			if ((i_wb_addr[0])&&(!CONSTANT_SPEED))
 				r_speed <= i_wb_data[(TICKBITS-1):0];
-		end
+		end else if (zero_speed_err)
+			r_speed <= CLOCKS_PER_TICK;
+		zero_speed_err <= (r_speed == 0);
 
 		wr_sel <= 4'h0;
 		wr_inc <= 1'b0;
@@ -234,20 +245,25 @@ module	wbi2cmaster(i_clk, i_rst,
 			mem[wr_addr[6:2]][ 7: 0] <= wr_data[ 7: 0];
 	end
 
+	reg		last_op;
 	reg		rd_inc;
 	reg		last_err;
 	reg	[6:0]	last_dev;
 	reg	[6:0]	last_adr;
 	reg	[7:0]	count_left;
 	initial	rd_inc = 1'b0;
+	wire	[31:0]	w_wb_status;
+	assign	w_wb_status = { r_busy, last_err, 6'h0,
+				last_dev, 2'b0, last_adr, count_left };
 	always @(posedge i_clk)
 	begin // Read values and place them on the master wishbone bus.
+		last_op <= (count_left[7:0] == 0);
 		if ((i_wb_stb)&&(i_wb_we)&&(!r_busy)&&(!i_wb_addr[0]))
 			count_left  <= i_wb_data[ 7: 0];
 		if (wr_inc)
 		begin
 			last_dev <= newdev;
-			last_adr <= wr_addr;
+			last_adr <= wr_addr+1'b1;
 			if (|count_left)
 				count_left <= count_left - 1'b1;
 		end else if (rd_inc)
@@ -259,8 +275,7 @@ module	wbi2cmaster(i_clk, i_rst,
 		end
 
 		casez({i_wb_addr[5], i_wb_addr[0]})
-		2'b00: o_wb_data <= { r_busy, last_err, 6'h0,
-					last_dev, 1'b0, last_adr, 1'b0, count_left };
+		2'b00: o_wb_data <= w_wb_status;
 		2'b01: o_wb_data <= { {(32-TICKBITS){1'b0}}, r_speed };
 		2'b1?: o_wb_data <= mem[i_wb_addr[4:0]];
 		endcase
@@ -301,17 +316,15 @@ module	wbi2cmaster(i_clk, i_rst,
 	reg		last_ack, last_addr_flag;
 	reg	[2:0]	mstate;
 	reg	[1:0]	acks_pending;
-	reg	[6:0]	last_read_addr;
 	initial		r_write_lock = 1'b0;
 	reg	[1:0]	r_write_pause;
 	initial	mstate = `I2MIDLE;
 	initial	r_busy = 1'b0;
 	always @(posedge i_clk)
 	begin
-		last_read_addr <= newadr + newcnt;
 		if (!ll_i2c_cyc)
 			last_addr_flag <= 1'b0;
-		else if (rd_addr == last_read_addr)
+		else if (last_op)
 			last_addr_flag <= 1'b1;
 		rd_stb <= 1'b0;
 
@@ -386,7 +399,7 @@ module	wbi2cmaster(i_clk, i_rst,
 				ll_i2c_we  <= 1'b1;
 				ll_i2c_tx_data <= { newdev, 1'b1 };
 				mstate <= `I2MRXDATA;
-				r_write_pause <= 2'b10;
+				r_write_pause <= 2'b01;
 			end end
 		`I2MTXDATA: begin // We are sending to the slave
 			ll_i2c_stb <= 1'b1;
@@ -432,5 +445,9 @@ module	wbi2cmaster(i_clk, i_rst,
 	end
 
 	assign	o_int = !r_busy;
+
+	assign	o_dbg = { ll_dbg[31:29],
+		last_adr, wr_inc, count_left[5:0],
+		ll_dbg[14:0] };
 endmodule
 

@@ -76,12 +76,15 @@ class	I2CSIMSLAVE {
 		return m_ack;
 	}
 	volatile char	read(int addr) {
+		// printf("SETTING READ ADDRESS TO %02x\n", m_daddr);
 		m_daddr = addr;
 		return m_data[m_daddr];
 	}
 	volatile char	read(void) {
+		char	vl = m_data[m_daddr];
+		// printf("READING FROM ADDRESS %02x\n", m_daddr);
 		m_daddr = (m_daddr+1)&0x07f;
-		return m_data[m_daddr];
+		return vl;
 	}
 	volatile void	write(int addr, char data) {
 		m_daddr = addr & 0x07f;
@@ -111,7 +114,7 @@ public:
 
 	I2CBUS	operator()(int scl, int sda);
 	I2CBUS	operator()(const I2CBUS b) { return (*this)(b.m_scl, b.m_sda); }
-	char	operator[](const int a) {
+	char	&operator[](const int a) {
 		return m_data[(a&0x07f)]; }
 
 	unsigned vstate(void) const {

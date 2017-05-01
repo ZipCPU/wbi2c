@@ -44,7 +44,7 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 			&&(sda & m_bus.m_sda)&&(!m_last_sda)) {
 		// Stop bit: Low to high transition with scl high
 		// Leave the bus as is
-		printf("START BIT: Setting state to idle\n");
+		// printf("START BIT: Setting state to idle\n");
 		m_state = I2CIDLE;
 		m_illegal = false;
 
@@ -102,12 +102,15 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 				if (m_counter++ < 400) {
 					m_bus.m_scl = 0;
 				} else if ((r.m_scl==0)&&(m_last_scl)) {
-					if (m_devword&1)
+					if (m_devword&1) {
 						m_state = I2CSTX;
-					else
+						m_dreg = read();
+						// printf("I2C: Sending %02x next\n", m_dreg & 0x0ff);
+					} else {
 						m_state = I2CADDR;
-					m_abits = 0;
-					m_addr  = 0;
+						m_abits = 0;
+						m_addr  = 0;
+					}
 				}
 			} m_dbits = 0;
 			break;
@@ -117,6 +120,7 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 				m_abits++;
 				if (m_abits >= 8) {
 					m_state = I2CSACK;
+					m_daddr = m_addr;
 					m_ack = getack(m_addr);
 				} m_counter = 0;
 			} else if (scl) {
@@ -190,6 +194,7 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 					// master ACK'd.  Go on
 					m_state = I2CSTX;
 					m_dreg = read();
+					// printf("I2C: Sending %02x next\n", m_dreg & 0x0ff);
 				} else {
 					m_state = I2CILLEGAL;
 				}
