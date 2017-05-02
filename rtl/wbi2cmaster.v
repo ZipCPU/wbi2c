@@ -107,13 +107,14 @@ module	wbi2cmaster(i_clk, i_rst,
 		, i_vstate
 `endif
 		);
-	parameter [0:0]	CONSTANT_SPEED = 1'b0, READ_ONLY = 1'b0;
-	parameter [5:0]	TICKBITS = 6'd20;
+	parameter [0:0]		CONSTANT_SPEED = 1'b0, READ_ONLY = 1'b0;
+	parameter [5:0]		TICKBITS = 6'd20;
 	parameter [(TICKBITS-1):0]	CLOCKS_PER_TICK = 20'd1000;
+	parameter [4:0]		MEM_ADDR_BITS = 5'd7;
 	input	wire		i_clk, i_rst;
 	// Input bus wires
 	input	wire		i_wb_cyc, i_wb_stb, i_wb_we;
-	input	wire	[5:0]	i_wb_addr;
+	input	wire	[(MEM_ADDR_BITS-2):0]	i_wb_addr;
 	input	wire	[31:0]	i_wb_data;
 	input	wire	[3:0]	i_wb_sel;
 	// Output bus wires
@@ -136,7 +137,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	//
 	// Our shared memory structure -- it gets no initial value(s)
 	//
-	reg	[31:0]	mem	[0:31];
+	reg	[31:0]	mem	[0:((1<<(MEM_ADDR_BITS-2))-1)];
 
 	// r_speed ... the programmable number of system clocks per I2C
 	// wait state.  Nominally, this is one quarter the clock speed of the
@@ -167,7 +168,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	// First, to arbitrate who has access to memory, and yet to keep our
 	// block RAM, we'll create an intermediate data structure and delay
 	// any writes to RAM by one clock.
-	reg	[6:0]	wr_addr;
+	reg	[(MEM_ADDR_BITS-1):0]	wr_addr;
 	reg	[3:0]	wr_sel;
 	reg	[31:0]	wr_data;
 	reg		wr_inc;
@@ -177,16 +178,16 @@ module	wbi2cmaster(i_clk, i_rst,
 	reg		start_request;
 	reg	[7:1]	newdev;
 	reg		newrx_txn;
-	reg	[6:0]	newadr;
-	reg	[6:0]	newcnt;
+	reg	[(MEM_ADDR_BITS-1):0]	newadr;
+	reg	[(MEM_ADDR_BITS-1):0]	newcnt;
 	//
 	reg		r_busy;
 	//
 	initial	start_request = 1'b0;
 	initial	newdev    = 7'h0;
 	initial	newrx_txn = 1'b0;
-	initial	newadr    = 7'h0;
-	initial	newcnt    = 7'h0;
+	initial	newadr    = 0;
+	initial	newcnt    = 0;
 	initial	r_speed   = CLOCKS_PER_TICK;
 	initial	zero_speed_err = 1'b0;
 	always @(posedge i_clk)
@@ -194,15 +195,24 @@ module	wbi2cmaster(i_clk, i_rst,
 		start_request <= 1'b0;
 		if ((i_wb_stb)&&(i_wb_we)&&(!r_busy)&&(!i_wb_addr[5]))
 		begin
-			if (!i_wb_addr[0])
+			if (!i_wb_addr[0])	// &&(MEM_ADDR_BITS <= 8)
 			begin
 				newdev     <= i_wb_data[23:17];
 				newrx_txn  <= i_wb_data[16];
-				newadr     <= i_wb_data[14: 8];
-				newcnt     <= i_wb_data[ 6: 0];
+				newadr     <= i_wb_data[(8+MEM_ADDR_BITS-1): 8];
+				newcnt     <= i_wb_data[(MEM_ADDR_BITS-1): 0];
 
-				start_request <= (i_wb_data[6:0] != 0)
-					&&((!READ_ONLY)||(newrx_txn));
+				start_request <= (i_wb_data[(MEM_ADDR_BITS-1):0] != 0)
+					&&((!READ_ONLY)||(i_wb_data[16]));
+			// end else if ((MEM_ADDR_BITS > 8)&&(!i_wb_addr))
+			// begin
+			//	newdev     <= i_wb_data[27:21];
+			//	newrx_txn  <= i_wb_data[20];
+			//	newadr    <= i_wb_data[(12+MEM_ADDR_BITS-1):12];
+			//	newcnt    <= i_wb_data[(MEM_ADDR_BITS-1): 0];
+
+			//	start_request <= (i_wb_data[(MEM_ADDR_BITS-1):0] != 0)
+			//		&&((!READ_ONLY)||(i_wb_data[20]));
 			end
 
 			if ((i_wb_addr[0])&&(!CONSTANT_SPEED))
@@ -218,7 +228,7 @@ module	wbi2cmaster(i_clk, i_rst,
 			if (ll_i2c_ack)
 			begin
 				wr_data <= { (4) {ll_i2c_rx_data} };
-				wr_addr <= newadr[6:0];
+				wr_addr <= newadr[(MEM_ADDR_BITS-1):0];
 				case(newadr[1:0])
 				2'b00: wr_sel <= 4'b1000;
 				2'b01: wr_sel <= 4'b0100;
@@ -232,34 +242,47 @@ module	wbi2cmaster(i_clk, i_rst,
 			wr_data <= i_wb_data;
 			wr_sel  <= ((i_wb_stb)&&(i_wb_we)&&(i_wb_addr[5]))
 					? i_wb_sel:4'h0;
-			wr_addr <= { i_wb_addr[4:0], 2'b00 };
+			wr_addr <= { i_wb_addr[(MEM_ADDR_BITS-3):0], 2'b00 };
 		end
 
 		if (wr_sel[3])
-			mem[wr_addr[6:2]][31:24] <= wr_data[31:24];
+			mem[wr_addr[(MEM_ADDR_BITS-1):2]][31:24] <= wr_data[31:24];
 		if (wr_sel[2])
-			mem[wr_addr[6:2]][23:16] <= wr_data[23:16];
+			mem[wr_addr[(MEM_ADDR_BITS-1):2]][23:16] <= wr_data[23:16];
 		if (wr_sel[1])
-			mem[wr_addr[6:2]][15: 8] <= wr_data[15: 8];
+			mem[wr_addr[(MEM_ADDR_BITS-1):2]][15: 8] <= wr_data[15: 8];
 		if (wr_sel[0])
-			mem[wr_addr[6:2]][ 7: 0] <= wr_data[ 7: 0];
+			mem[wr_addr[(MEM_ADDR_BITS-1):2]][ 7: 0] <= wr_data[ 7: 0];
 	end
 
 	reg		last_op;
 	reg		rd_inc;
 	reg		last_err;
-	reg	[6:0]	last_dev;
-	reg	[6:0]	last_adr;
-	reg	[7:0]	count_left;
+	reg	[(MEM_ADDR_BITS-1):0]	last_dev;
+	reg	[(MEM_ADDR_BITS-1):0]	last_adr;
+	reg	[(MEM_ADDR_BITS-1):0]	count_left;
 	initial	rd_inc = 1'b0;
 	wire	[31:0]	w_wb_status;
-	assign	w_wb_status = { r_busy, last_err, 6'h0,
-				last_dev, 2'b0, last_adr, count_left };
+
+	assign	w_wb_status[(MEM_ADDR_BITS-1):0] = count_left;
+	assign	w_wb_status[(8+MEM_ADDR_BITS-1):8] = last_adr;
+	assign	w_wb_status[23:16] = { last_dev, 1'b0 };
+	assign	w_wb_status[31:24] = { r_busy, last_err, 6'h0 };
+	generate if (MEM_ADDR_BITS < 8)
+	begin
+		assign	w_wb_status[15:(MEM_ADDR_BITS+8)] = 0;
+		assign	w_wb_status[ 7:(MEM_ADDR_BITS)] = 0;
+	end endgenerate
+
+	reg	[(MEM_ADDR_BITS-1):0]	rd_addr;
 	always @(posedge i_clk)
 	begin // Read values and place them on the master wishbone bus.
-		last_op <= (count_left[7:0] == 0);
 		if ((i_wb_stb)&&(i_wb_we)&&(!r_busy)&&(!i_wb_addr[0]))
-			count_left  <= i_wb_data[ 7: 0];
+		begin
+			count_left  <= i_wb_data[(MEM_ADDR_BITS-1): 0];
+			last_op <= 1'b0;
+		end else
+			last_op <= (count_left[(MEM_ADDR_BITS-1):0] == 0);
 		if (wr_inc)
 		begin
 			last_dev <= newdev;
@@ -274,20 +297,20 @@ module	wbi2cmaster(i_clk, i_rst,
 				count_left <= count_left - 1'b1;
 		end
 
-		casez({i_wb_addr[5], i_wb_addr[0]})
+		casez({i_wb_addr[(MEM_ADDR_BITS-2)], i_wb_addr[0]})
 		2'b00: o_wb_data <= w_wb_status;
 		2'b01: o_wb_data <= { {(32-TICKBITS){1'b0}}, r_speed };
-		2'b1?: o_wb_data <= mem[i_wb_addr[4:0]];
+		2'b1?: o_wb_data <= mem[i_wb_addr[(MEM_ADDR_BITS-3):0]];
 		endcase
 	end
 
+	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
 		o_wb_ack <= i_wb_stb;
 	assign	o_wb_stall = 1'b0;
 
 
 	reg		rd_stb;
-	reg	[6:0]	rd_addr;
 	reg	[31:0]	rd_word;
 	reg	[7:0]	rd_byte;
 	reg	[1:0]	rd_sel;
@@ -295,7 +318,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	begin
 		if (rd_stb)
 		begin
-			rd_word <= mem[rd_addr[6:2]];
+			rd_word <= mem[rd_addr[(MEM_ADDR_BITS-1):2]];
 			rd_sel  <= rd_addr[1:0];
 		end
 
