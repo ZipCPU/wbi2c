@@ -66,10 +66,11 @@ module	wbi2cslave(i_clk, i_rst,
 	parameter [0:0]	WB_READ_ONLY = 1'b0;
 	parameter [0:0]	I2C_READ_ONLY = 1'b0;
 	parameter [6:0]	SLAVE_ADDRESS = 7'h50;
+	parameter	MEM_ADDR_BITS = 8;
 	localparam [0:0]	READ_ONLY = (WB_READ_ONLY)&&(I2C_READ_ONLY);
 	input	wire		i_clk, i_rst;
 	input	wire		i_wb_cyc, i_wb_stb, i_wb_we;
-	input	wire	[4:0]	i_wb_addr;
+	input	wire	[(MEM_ADDR_BITS-3):0]	i_wb_addr;
 	input	wire	[31:0]	i_wb_data;
 	input	wire	[3:0]	i_wb_sel;
 	output	reg		o_wb_ack;
@@ -80,7 +81,7 @@ module	wbi2cslave(i_clk, i_rst,
 	//
 	output	wire	[31:0]	o_dbg;
 
-	reg	[31:0]	mem	[0:31];
+	reg	[31:0]	mem	[0:((1<<(MEM_ADDR_BITS-2))-1)];
 
 `ifndef	VERILATOR
 	initial begin
@@ -95,7 +96,7 @@ module	wbi2cslave(i_clk, i_rst,
 
 	reg	[3:0]	r_we;
 	reg	[31:0]	r_data;
-	reg	[4:0]	r_addr;
+	reg	[(MEM_ADDR_BITS-3):0]	r_addr;
 	initial	r_we = 4'h0;
 	always @(posedge i_clk)
 	begin
@@ -108,7 +109,8 @@ module	wbi2cslave(i_clk, i_rst,
 			else
 				r_we <= 4'h0;
 			r_data  <= (wr_stb[4])? {(4){wr_data}} : i_wb_data;
-			r_addr  <= (wr_stb[4]) ? i2c_addr[6:2] : i_wb_addr;
+			r_addr  <= (wr_stb[4]) ? i2c_addr[(MEM_ADDR_BITS-1):2]
+					: i_wb_addr;
 		end else
 			r_we <= 4'h0;
 			// data and address are don't cares if READ_ONLY is set
@@ -130,7 +132,7 @@ module	wbi2cslave(i_clk, i_rst,
 	end
 
 	always @(posedge i_clk)
-		o_wb_data <= mem[ i_wb_addr[4:0] ];
+		o_wb_data <= mem[ i_wb_addr[(MEM_ADDR_BITS-3):0] ];
 
 	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
@@ -354,7 +356,7 @@ module	wbi2cslave(i_clk, i_rst,
 	reg	[1:0]	pipe_sel;
 	always @(posedge i_clk)
 		if(bus_rd_stb)
-			pipe_mem <= mem[i2c_addr[6:2]];
+			pipe_mem <= mem[i2c_addr[(MEM_ADDR_BITS-1):2]];
 	always @(posedge i_clk)
 		if (bus_rd_stb)
 			pipe_sel <= i2c_addr[1:0];

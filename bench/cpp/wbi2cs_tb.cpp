@@ -52,6 +52,9 @@
 #include "wb_tb.h"
 // #include "twoc.h"
 
+#define	MEM_ADDR_BITS	8
+#define	FULMEMSZ	(1<<(MEM_ADDR_BITS))
+
 #define	SLAVE_ADDRESS	0x50
 #define	SCK	m_core->i_i2c_sck
 #define	SDA	m_core->i_i2c_sda
@@ -97,7 +100,7 @@ public:
 		int	wv;
 
 		mem = m_core->v__DOT__mem;
-		wv = mem[(addr>>2)&0x01f];
+		wv = mem[(addr>>2)&((FULMEMSZ-1)>>2)];
 		wv >>= 8*(3-(addr&0x03));
 		return wv & 0x0ff;
 	}
@@ -313,7 +316,7 @@ int	main(int argc, char **argv) {
 	// Setup
 	Verilated::commandArgs(argc, argv);
 	I2CS_TB	*tb = new I2CS_TB();
-	char	buf[128], tbuf[128];
+	char	buf[FULMEMSZ], tbuf[FULMEMSZ];
 
 	tb->reset();
 	tb->opentrace("i2cs_tb.vcd");
@@ -361,7 +364,6 @@ int	main(int argc, char **argv) {
 	// Test point 3: Walk through this, reading random bytes
 	for(unsigned i=0, a=7; i<sizeof(buf); i++, a += 41) {
 		a &= 127;
-		printf("READING FROM ADDR: %02x\n", a);
 		tb->i2c_read(a, 1, &tbuf[a]);
 
 		//
@@ -377,7 +379,7 @@ int	main(int argc, char **argv) {
 
 	// Test point 4: Walk through this, reading random byte pairs
 	for(unsigned i=0, a=7; i<sizeof(tbuf); i++, a += 97) {
-		a &= 126;
+		a &= (FULMEMSZ-2);
 		tb->i2c_read(a, 2, &tbuf[a]);
 
 		//
@@ -390,14 +392,25 @@ int	main(int argc, char **argv) {
 
 	// Test point 5: Make sure we haven't changed anything up to this point
 	for(unsigned i=0; i<sizeof(buf); i++) {
-		TBASSERT(*tb, (((buf[i]^(*tb)[i])&0x0ff) == 0));
+		if ((i&15)==0)
+			printf("READ[%02x]: %02x ", i, buf[i]&0x0ff);
+		else if ((i&15)==15)
+			printf(" %02x\n", buf[i]&0x0ff);
+		else
+			printf(" %02x ", buf[i]&0x0ff);
+		fflush(stdout);
+		if (((buf[i]^(*tb)[i])&0x0ff) != 0) {
+			fprintf(stderr, "ERR: %02x (RD) != %02x (EXP) @ %02x\n",
+				buf[i], (*tb)[i], i);
+			TBASSERT(*tb, (((buf[i]^(*tb)[i])&0x0ff) == 0));
+		}
 	}
 
 	// Test point 6: Write a new buffer, pairs of addresses at a time
 	randomize_buffer(sizeof(buf), buf);
 	printf("\n\nWRITE-TEST\n\n");
 	for(unsigned i=0, a=0; i<sizeof(buf); i++, a += 61*2) {
-		a &= 126;
+		a &= (FULMEMSZ-2);
 		printf("PRE-WRITE[%02x] := %02x:%02x (MEM)\n", a,
 			(*tb)[a]&0x0ff, (*tb)[a+1]&0x0ff);
 		tb->i2c_write(a, 2, &buf[a]);
