@@ -61,9 +61,10 @@ typedef	enum { I2CIDLE=0, I2CDEVADDR, I2CDEVACK,
 } I2CSTATE;
 
 class	I2CSIMSLAVE {
-	char	m_data[128];
+	char	*m_data;
 	int	m_addr, m_daddr, m_abits, m_dbits, m_dreg, m_ack,
 			m_last_sda, m_last_scl, m_counter, m_devword,
+			m_memsz, m_adrmsk,
 		m_devaddr;
 	bool	m_illegal;
 	unsigned long	m_tick, m_last_change_tick, m_speed;
@@ -76,28 +77,31 @@ class	I2CSIMSLAVE {
 		return m_ack;
 	}
 	volatile char	read(int addr) {
-		// printf("SETTING READ ADDRESS TO %02x\n", m_daddr);
+		// printf("SETTING READ ADDRESS TO %02x\n", m_daddr & m_adrmsk);
 		m_daddr = addr;
 		return m_data[m_daddr];
 	}
 	volatile char	read(void) {
 		char	vl = m_data[m_daddr];
-		// printf("READING FROM ADDRESS %02x\n", m_daddr);
-		m_daddr = (m_daddr+1)&0x07f;
+		// printf("READING FROM ADDRESS %02x\n", m_daddr & m_adrmsk);
+		m_daddr = (m_daddr+1)&m_adrmsk;
 		return vl;
 	}
 	volatile void	write(int addr, char data) {
-		m_daddr = addr & 0x07f;
+		m_daddr = addr & m_adrmsk;
 		m_data[m_daddr] = data;
 	} volatile void	write(char data) {
-		m_daddr = (m_daddr+1) & 0x07f;
+		m_daddr = (m_daddr+1) & m_adrmsk;
 		m_data[m_daddr] = data;
 	}
 public:
-	I2CSIMSLAVE(const int ADDRESS = 0x050) {
+	I2CSIMSLAVE(const int ADDRESS = 0x050, const int nbits = 7) {
+		m_memsz = (1<<nbits);
+		m_adrmsk = m_memsz-1;
+		m_data = new char[m_memsz];
 		m_last_sda = 1;
 		m_last_scl = 1;
-		for(int i=0; i<128; i++)
+		for(int i=0; i<m_memsz; i++)
 			m_data[i] = 0;
 		m_addr = 0;
 		m_illegal = false;
@@ -109,13 +113,13 @@ public:
 		m_devaddr = ADDRESS;
 		m_daddr = 0;
 
-		memset(m_data, 0, sizeof(m_data));
+		memset(m_data, 0, m_memsz);
 	}
 
 	I2CBUS	operator()(int scl, int sda);
 	I2CBUS	operator()(const I2CBUS b) { return (*this)(b.m_scl, b.m_sda); }
 	char	&operator[](const int a) {
-		return m_data[(a&0x07f)]; }
+		return m_data[a&m_adrmsk]; }
 
 	unsigned vstate(void) const {
 		return m_state;

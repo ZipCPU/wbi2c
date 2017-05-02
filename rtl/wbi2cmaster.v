@@ -110,7 +110,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	parameter [0:0]		CONSTANT_SPEED = 1'b0, READ_ONLY = 1'b0;
 	parameter [5:0]		TICKBITS = 6'd20;
 	parameter [(TICKBITS-1):0]	CLOCKS_PER_TICK = 20'd1000;
-	parameter [4:0]		MEM_ADDR_BITS = 5'd7;
+	parameter 		MEM_ADDR_BITS = 7;
 	input	wire		i_clk, i_rst;
 	// Input bus wires
 	input	wire		i_wb_cyc, i_wb_stb, i_wb_we;
@@ -193,7 +193,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	always @(posedge i_clk)
 	begin	// Writes from the master wishbone bus
 		start_request <= 1'b0;
-		if ((i_wb_stb)&&(i_wb_we)&&(!r_busy)&&(!i_wb_addr[5]))
+		if ((i_wb_stb)&&(i_wb_we)&&(!r_busy)&&(!i_wb_addr[(MEM_ADDR_BITS-2)]))
 		begin
 			if (!i_wb_addr[0])	// &&(MEM_ADDR_BITS <= 8)
 			begin
@@ -240,7 +240,7 @@ module	wbi2cmaster(i_clk, i_rst,
 			end
 		end else if (!READ_ONLY) begin
 			wr_data <= i_wb_data;
-			wr_sel  <= ((i_wb_stb)&&(i_wb_we)&&(i_wb_addr[5]))
+			wr_sel  <= ((i_wb_stb)&&(i_wb_we)&&(i_wb_addr[MEM_ADDR_BITS-2]))
 					? i_wb_sel:4'h0;
 			wr_addr <= { i_wb_addr[(MEM_ADDR_BITS-3):0], 2'b00 };
 		end
@@ -258,7 +258,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	reg		last_op;
 	reg		rd_inc;
 	reg		last_err;
-	reg	[(MEM_ADDR_BITS-1):0]	last_dev;
+	reg	[6:0]	last_dev;
 	reg	[(MEM_ADDR_BITS-1):0]	last_adr;
 	reg	[(MEM_ADDR_BITS-1):0]	count_left;
 	initial	rd_inc = 1'b0;
@@ -336,6 +336,12 @@ module	wbi2cmaster(i_clk, i_rst,
 	// The master state machine
 	//
 	//
+	wire	[7:0]	w_byte_addr;
+	assign	w_byte_addr[(MEM_ADDR_BITS-1):0] = newadr;
+	generate if (MEM_ADDR_BITS < 8)
+		assign w_byte_addr[7:(MEM_ADDR_BITS)] = 0;
+	endgenerate
+
 	reg		last_ack, last_addr_flag;
 	reg	[2:0]	mstate;
 	reg	[1:0]	acks_pending;
@@ -392,7 +398,7 @@ module	wbi2cmaster(i_clk, i_rst,
 			begin
 				ll_i2c_we  <= 1'b1;	// Still writing
 				ll_i2c_stb <= 1'b1;
-				ll_i2c_tx_data <= { 1'b0, newadr };
+				ll_i2c_tx_data <= w_byte_addr;
 				if (newrx_txn)
 					mstate <= `I2MRDSTOP;
 				else begin
@@ -470,7 +476,7 @@ module	wbi2cmaster(i_clk, i_rst,
 	assign	o_int = !r_busy;
 
 	assign	o_dbg = { ll_dbg[31:29],
-		last_adr, wr_inc, count_left[5:0],
+		last_adr[6:0], wr_inc, count_left[5:0],
 		ll_dbg[14:0] };
 endmodule
 

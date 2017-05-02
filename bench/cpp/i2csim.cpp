@@ -160,7 +160,7 @@ I2CBUS	I2CSIMSLAVE::operator()(int scl, int sda) {
 						// Get an ack from the master
 						m_state = I2CSACK;
 						write(m_addr, m_dreg);
-						m_addr = (m_addr + 1)&0x07f;
+						m_addr = (m_addr + 1)&m_adrmsk;
 					}
 				} m_counter = 0;
 			} break;
