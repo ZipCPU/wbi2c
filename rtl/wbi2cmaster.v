@@ -357,7 +357,8 @@ module	wbi2cmaster(i_clk, i_rst,
 			last_addr_flag <= 1'b1;
 		rd_stb <= 1'b0;
 
-		if ((!r_busy)&&(i_wb_stb)&&(!i_wb_addr[0]))
+		if ((!r_busy)&&(i_wb_stb)&&(!i_wb_addr[0])
+				&&(!i_wb_addr[(MEM_ADDR_BITS-2)]))
 			last_err <= 1'b0;
 		else if ((r_busy)&&(ll_i2c_err))
 			last_err <= 1'b1;
@@ -404,6 +405,11 @@ module	wbi2cmaster(i_clk, i_rst,
 				else begin
 					mstate <= `I2MTXDATA;
 				end
+			end
+			if (ll_i2c_err)
+			begin
+				mstate <= `I2MCLEANUP;
+				ll_i2c_stb <= 1'b0;
 			end end
 		`I2MRDSTOP: begin // going to read, need to send the dev addr
 			// First thing we have to do is end our transaction
@@ -417,6 +423,11 @@ module	wbi2cmaster(i_clk, i_rst,
 			begin
 				ll_i2c_cyc <= 1'b0;
 				mstate <= `I2MRDDEV;
+			end
+			if (ll_i2c_err)
+			begin
+				mstate <= `I2MCLEANUP;
+				ll_i2c_stb <= 1'b0;
 			end end
 		`I2MRDDEV: begin
 			ll_i2c_stb <= 1'b0;
@@ -429,6 +440,11 @@ module	wbi2cmaster(i_clk, i_rst,
 				ll_i2c_tx_data <= { newdev, 1'b1 };
 				mstate <= `I2MRXDATA;
 				r_write_pause <= 2'b01;
+			end
+			if (ll_i2c_err)
+			begin
+				mstate <= `I2MCLEANUP;
+				ll_i2c_stb <= 1'b0;
 			end end
 		`I2MTXDATA: begin // We are sending to the slave
 			ll_i2c_stb <= 1'b1;
@@ -444,6 +460,11 @@ module	wbi2cmaster(i_clk, i_rst,
 					ll_i2c_stb <= 1'b0;
 					mstate <= `I2MCLEANUP;
 				end
+			end
+			if (ll_i2c_err)
+			begin
+				mstate <= `I2MCLEANUP;
+				ll_i2c_stb <= 1'b0;
 			end end
 		`I2MRXDATA: begin
 			ll_i2c_we <= 1'b0;
@@ -458,6 +479,11 @@ module	wbi2cmaster(i_clk, i_rst,
 			begin
 				ll_i2c_stb <= 1'b0;
 				mstate <= `I2MCLEANUP;
+			end
+			if (ll_i2c_err)
+			begin
+				mstate <= `I2MCLEANUP;
+				ll_i2c_stb <= 1'b0;
 			end end
 		`I2MCLEANUP: begin
 			ll_i2c_cyc <= 1'b1;
