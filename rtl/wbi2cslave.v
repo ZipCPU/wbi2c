@@ -382,4 +382,10 @@ module	wbi2cslave(i_clk, i_rst,
 	assign	o_dbg = { r_trigger, 27'h0,
 			i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda // 4b
 			};
+
+	// Make verilator happy
+	// verilator lint_off UNUSED
+	wire	[1:0]	unused;
+	assign	unused = { i_wb_cyc, i_rst };
+	// verilator lint_on  UNUSED
 endmodule
