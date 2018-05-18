@@ -4,7 +4,7 @@
 //
 // Project:	WBI2C ... a set of Wishbone controlled I2C controllers
 //
-// Purpose:	Bench testing for the divide unit found within the Zip CPU.
+// Purpose:	Bench testing for the I2C slave controller
 //
 //
 // Creator:	Dan Gisselquist, Ph.D.
@@ -12,7 +12,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Copyright (C) 2017, Gisselquist Technology, LLC
+// Copyright (C) 2017-2018, Gisselquist Technology, LLC
 //
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -51,6 +51,14 @@
 #include "testb.h"
 #include "wb_tb.h"
 // #include "twoc.h"
+
+#ifdef	OLD_VERILATOR
+#define	VVAR(A)	v__DOT_ ## A
+#else
+#define	VVAR(A)	wbi2cslave__DOT_ ## A
+#endif
+
+#define	mem	VVAR(_mem)
 
 #define	MEM_ADDR_BITS	8
 #define	FULMEMSZ	(1<<(MEM_ADDR_BITS))
@@ -99,7 +107,7 @@ public:
 		unsigned int *mem;
 		int	wv;
 
-		mem = m_core->v__DOT__mem;
+		mem = m_core->mem;
 		wv = mem[(addr>>2)&((FULMEMSZ-1)>>2)];
 		wv >>= 8*(3-(addr&0x03));
 		return wv & 0x0ff;

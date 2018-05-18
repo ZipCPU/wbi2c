@@ -28,10 +28,10 @@
 ##
 ################################################################################
 ##
-## Copyright (C) 2015-2017, Gisselquist Technology, LLC
+## Copyright (C) 2015-2018, Gisselquist Technology, LLC
 ##
 ## This program is free software (firmware): you can redistribute it and/or
-## modify it under the terms of  the GNU General Public License as published
+## modify it under the terms of the GNU General Public License as published
 ## by the Free Software Foundation, either version 3 of the License, or (at
 ## your option) any later version.
 ##
@@ -51,17 +51,22 @@
 ################################################################################
 ##
 ##
-all: wbi2cs_tb wbi2cm_tb
+all: wbi2cs_tb wbi2cm_tb test
 PROGRAMS := wbi2cs_tb wbi2cm_tb
 all: $(PROGRAMS)
 
 CXX	:= g++
-CFLAGS	:= -Wall -Og -g
 OBJDIR  := obj-pc
 RTLD	:= ../../rtl
 RTLOBJD := $(RTLD)/obj_dir
+ifneq ($(VERILATOR_ROOT),)
+VERILATOR:=$(VERILATOR_ROOT)/bin/verilator
+else
 VERILATOR_ROOT ?= $(shell bash -c 'verilator -V|grep VERILATOR_ROOT | head -1 | sed -e " s/^.*=\s*//"')
+endif
+export	$(VERILATOR)
 VROOT   := $(VERILATOR_ROOT)
+VDEFS   := $(shell ./vversion.sh)
 VINCS	:= -I$(VROOT)/include -I$(VROOT)/include/vltstd
 INCS	:= -I$(RTLOBJD) $(VINCS)
 COMNSRC := byteswap.cpp
@@ -75,10 +80,11 @@ VLOBJS  := $(OBJDIR)/verilated.o $(OBJDIR)/verilated_vcd_c.o
 VLIB	:= $(addprefix $(VROOT)/include/,$(VLSRCS))
 LIBS	:= $(RTLOBJD)/Vwbi2cslave__ALL.a
 LIBM	:= $(RTLOBJD)/Vwbi2cmaster__ALL.a
+CFLAGS	:= -Wall -Og -g
 
 $(OBJDIR)/%.o: %.cpp
 	$(mk-objdir)
-	$(CXX) $(CFLAGS) $(INCS) -c $< -o $@
+	$(CXX) $(CFLAGS) $(VDEFS) $(INCS) -c $< -o $@
 
 
 $(OBJDIR)/%.o: $(VROOT)/include/%.cpp
