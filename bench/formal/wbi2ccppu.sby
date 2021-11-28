@@ -1,0 +1,27 @@
+[tasks]
+prf
+cvr
+
+[options]
+prf: mode prove
+cvr: mode cover
+depth 3
+
+[engines]
+smtbmc
+
+[script]
+read -define ZIPCPU
+read -formal fwb_slave.v
+read -formal ffetch.v
+read -formal wbi2ccpu.v
+--pycode-begin--
+cmd = "hierarchy -top wbi2ccpu"
+output(cmd)
+--pycode-end--
+prep -top wbi2ccpu
+
+[files]
+../../rtl/wbi2ccpu.v
+../../../../../zipcpu/trunk/bench/formal/ffetch.v
+../../../../../zipcpu/trunk/rtl/ex/fwb_slave.v

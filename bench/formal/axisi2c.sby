@@ -1,0 +1,29 @@
+[tasks]
+prf
+cvr
+prflp prf opt_lowpower
+prfw  prf opt_watchdog
+
+[options]
+prf: mode prove
+prf: depth 4
+cvr: mode cover
+cvr: depth 200
+
+[engines]
+smtbmc
+# smtbmc boolector	## Yices is faster
+# smtbmc z3		## Boolector is faster, and yices even faster than that
+
+[script]
+read -formal axisi2c.v
+--pycode-begin--
+cmd = "hierarchy -top axisi2c"
+cmd += " -chparam OPT_LOWPOWER %d" % (1 if "opt_lowpower" in tags else 0)
+cmd += " -chparam OPT_WATCHDOG %d" % (10 if "opt_watchdog" in tags else 0)
+output(cmd)
+--pycode-end--
+prep -top axisi2c
+
+[files]
+../../rtl/axisi2c.v

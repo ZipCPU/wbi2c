@@ -1,0 +1,70 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Sat Nov 27 18:04:29 2021
+[*]
+[dumpfile_mtime] "Sat Nov 27 18:01:50 2021"
+[dumpfile_size] 2564
+[timestart] 0
+[size] 1534 900
+[pos] -1 -1
+*-5.908651 50 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 329
+[signals_width] 174
+[sst_expanded] 1
+[sst_vpaned_height] 236
+@28
+axisi2c.S_AXI_ACLK
+axisi2c.S_AXI_ARESETN
+@200
+-
+@28
+axisi2c.S_AXIS_TVALID
+axisi2c.S_AXIS_TREADY
+@22
+axisi2c.S_AXIS_TDATA[10:0]
+@200
+-
+@28
+axisi2c.M_AXIS_TVALID
+axisi2c.M_AXIS_TREADY
+@22
+axisi2c.M_AXIS_TDATA[7:0]
+@28
+axisi2c.M_AXIS_TLAST
+@200
+-
+@28
+axisi2c.nbits[2:0]
+axisi2c.i_ckedge
+axisi2c.o_stretch
+[color] 2
+axisi2c.ck_scl
+[color] 2
+axisi2c.ck_sda
+axisi2c.o_scl
+axisi2c.o_sda
+axisi2c.lst_scl
+axisi2c.lst_sda
+@200
+-
+@22
+axisi2c.state[3:0]
+@28
+axisi2c.dir
+axisi2c.channel_busy
+@22
+axisi2c.cvr_state[3:0]
+@28
+axisi2c.f_past_valid
+axisi2c.last_byte
+axisi2c.nbits[2:0]
+axisi2c.o_abort
+axisi2c.o_stretch
+@22
+axisi2c.sreg[7:0]
+@28
+axisi2c.stop_bit
+axisi2c.watchdog_timeout
+axisi2c.will_ack
+[pattern_trace] 1
+[pattern_trace] 0
