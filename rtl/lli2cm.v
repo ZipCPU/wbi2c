@@ -6,7 +6,7 @@
 //
 // Purpose:	This is a lower level I2C driver for a master I2C byte-wise
 //		interface.  This particular interface is designed to handle
-//	all byte level ineraction with he actual port.  The external interface
+//	all byte level ineraction with the actual port.  The external interface
 //	to this module is something akin to wishbone, although without the
 //	address register.
 //
