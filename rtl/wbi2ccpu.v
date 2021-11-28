@@ -393,6 +393,8 @@ module	wbi2ccpu #(
 	always @(posedge i_clk)
 	if (i_reset || i2c_abort)
 		insn_valid <= 1'b0;
+	else if (insn_valid && insn_ready && insn[11:8] == CMD_HALT)
+		insn_valid <= 1'b0;
 	else if (pf_valid && pf_ready)
 	begin
 		insn_valid <= imm_cycle || (pf_insn[7:4] != CMD_SEND

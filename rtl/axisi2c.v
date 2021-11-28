@@ -250,7 +250,6 @@ module axisi2c #(
 
 			sreg <= (OPT_LOWPOWER) ? 8'h0 : S_AXIS_TDATA[7:0];
 			dir  <= D_RD;
-assert(S_AXIS_TREADY);
 			if (S_AXIS_TVALID && S_AXIS_TREADY)
 			begin
 				// NOTE: We aren't detecting collisions here.
@@ -354,7 +353,6 @@ assert(S_AXIS_TREADY);
 			dir  <= D_RD;
 			o_sda <= 1'b0;
 			o_scl <= 1'b0;
-assert(S_AXIS_TREADY);
 			if (S_AXIS_TVALID && S_AXIS_TREADY)
 			begin
 				case(S_AXIS_TDATA[10:8])
@@ -578,126 +576,6 @@ assert(S_AXIS_TREADY);
 		end
 	end
 
-`ifdef	FORMAL
-	// {{{
-	always @(*)
-	if (S_AXI_ARESETN && (state != IDLE_STOPPED) && (state != IDLE_ACTIVE))
-		assert(!S_AXIS_TREADY);
-
-	always @(*)
-	if (S_AXI_ARESETN) case(state)
-	IDLE_STOPPED: begin
-		// {{{
-		assert(o_scl);
-		assert(o_sda);
-		end
-		// }}}
-	START: begin
-		// {{{
-		assert( o_scl);
-		assert(!o_sda);
-		assert(nbits == 7 || nbits == 0);
-		end
-		// }}}
-	IDLE_ACTIVE: begin
-		// {{{
-		assert(!o_sda);
-		assert(!o_scl);
-		assert(nbits == 0);
-		end
-		// }}}
-	STOP: begin
-		// {{{
-		// o_sda == 0
-		// o_scl == 1 on entry
-		assert( o_scl);
-		assert(!o_sda);
-		end
-		// }}}
-	REPEAT_START: begin
-		// {{{
-		assert(!o_scl);
-		assert( o_sda);
-		assert(nbits == 7 || nbits == 0);
-		end
-		// }}}
-	REPEAT_START2: begin
-		// {{{
-		assert(o_sda && o_scl);
-		assert(nbits == 7 || nbits == 0);
-		end
-		// }}}
-	//
-	DATA: begin
-		// {{{
-		assert(!o_scl);
-		if (dir == D_RD)
-			assert(o_sda || nbits == 7);
-		end
-		// }}}
-	CLOCK: begin
-		// {{{
-		if (dir == D_RD)
-			assert(o_sda);
-		else
-			assert(o_sda == sreg[7]);
-		end
-		// }}}
-	ACK: begin
-		// {{{
-		assert(!o_scl);
-		assert(nbits == 0);
-		end
-		// }}}
-	CKACKLO: begin
-		// {{{
-		assert(!o_scl);
-		assert(o_sda == ((dir == D_WR) || !will_ack));
-		assert(nbits == 0);
-		end
-		// }}}
-	CKACKHI: begin
-		// {{{
-		assert(o_scl);
-		assert(o_sda == ((dir == D_WR) || !will_ack));
-		assert(nbits == 0);
-		end
-		// }}}
-	RXNAK: begin
-		// {{{
-		assert(!o_scl && !o_sda);
-		assert(nbits == 0);
-		end
-		// }}}
-	ABORT: begin
-		// {{{
-		// COLLISION!!!
-		assert(o_scl);
-		assert(o_sda);
-		end
-		// }}}
-	default: begin
-		// {{{
-		assert(0);
-		end
-		// }}}
-	endcase
-
-	always @(posedge S_AXI_ACLK)
-	if (S_AXI_ARESETN && $past(S_AXI_ARESETN) && $past(o_scl))
-	begin
-		if ($past(!ck_scl) && !$past(S_AXIS_TREADY)
-			&& ($past(ck_sda == o_sda)))
-		begin
-			// HALT
-			assert($stable(state) || state == ABORT);
-			assert($stable(o_scl));
-			assert($stable(o_sda));
-		end
-	end
-	// }}}
-`endif
-
 	assign	S_AXIS_TREADY = i_ckedge && (state == IDLE_STOPPED
 				|| state == IDLE_ACTIVE);
 
@@ -731,25 +609,6 @@ assert(S_AXIS_TREADY);
 			o_abort <= 1;
 	end
 	// }}}
-
-`ifdef	FORMAL
-	always @(*)
-	if (S_AXI_ARESETN && o_abort)
-		assert(state == RXNAK || state == ABORT);
-
-	always @(posedge S_AXI_ACLK)
-	if (S_AXI_ARESETN && $past(S_AXI_ARESETN))
-	begin
-		if ($rose(state == ABORT))
-		begin
-			assert(o_abort);	// Collision
-		end else if ($rose(state == RXNAK))
-		begin
-			assert(o_abort);	// Failed NAK
-		end else
-			assert(!o_abort);
-	end
-`endif
 
 	// Stretch the idle clock, so we're always ready to accept once idle
 	// is over.
@@ -907,6 +766,147 @@ assert(S_AXIS_TREADY);
 			assert(M_AXIS_TDATA == 0);
 			assert(M_AXIS_TLAST == 0);
 		end
+	end
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Internal consistency checks
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
+
+	always @(*)
+	if (S_AXI_ARESETN && (state != IDLE_STOPPED) && (state != IDLE_ACTIVE))
+		assert(!S_AXIS_TREADY);
+
+	always @(*)
+	if (S_AXI_ARESETN) case(state)
+	IDLE_STOPPED: begin
+		// {{{
+		assert(o_scl);
+		assert(o_sda);
+		end
+		// }}}
+	START: begin
+		// {{{
+		assert( o_scl);
+		assert(!o_sda);
+		assert(nbits == 7 || nbits == 0);
+		end
+		// }}}
+	IDLE_ACTIVE: begin
+		// {{{
+		assert(!o_sda);
+		assert(!o_scl);
+		assert(nbits == 0);
+		end
+		// }}}
+	STOP: begin
+		// {{{
+		// o_sda == 0
+		// o_scl == 1 on entry
+		assert( o_scl);
+		assert(!o_sda);
+		end
+		// }}}
+	REPEAT_START: begin
+		// {{{
+		assert(!o_scl);
+		assert( o_sda);
+		assert(nbits == 7 || nbits == 0);
+		end
+		// }}}
+	REPEAT_START2: begin
+		// {{{
+		assert(o_sda && o_scl);
+		assert(nbits == 7 || nbits == 0);
+		end
+		// }}}
+	//
+	DATA: begin
+		// {{{
+		assert(!o_scl);
+		if (dir == D_RD)
+			assert(o_sda || nbits == 7);
+		end
+		// }}}
+	CLOCK: begin
+		// {{{
+		if (dir == D_RD)
+			assert(o_sda);
+		else
+			assert(o_sda == sreg[7]);
+		end
+		// }}}
+	ACK: begin
+		// {{{
+		assert(!o_scl);
+		assert(nbits == 0);
+		end
+		// }}}
+	CKACKLO: begin
+		// {{{
+		assert(!o_scl);
+		assert(o_sda == ((dir == D_WR) || !will_ack));
+		assert(nbits == 0);
+		end
+		// }}}
+	CKACKHI: begin
+		// {{{
+		assert(o_scl);
+		assert(o_sda == ((dir == D_WR) || !will_ack));
+		assert(nbits == 0);
+		end
+		// }}}
+	RXNAK: begin
+		// {{{
+		assert(!o_scl && !o_sda);
+		assert(nbits == 0);
+		end
+		// }}}
+	ABORT: begin
+		// {{{
+		// COLLISION!!!
+		assert(o_scl);
+		assert(o_sda);
+		end
+		// }}}
+	default: begin
+		// {{{
+		assert(0);
+		end
+		// }}}
+	endcase
+
+	always @(posedge S_AXI_ACLK)
+	if (S_AXI_ARESETN && $past(S_AXI_ARESETN) && $past(o_scl))
+	begin
+		if ($past(!ck_scl) && !$past(S_AXIS_TREADY)
+			&& ($past(ck_sda == o_sda)))
+		begin
+			// HALT
+			assert($stable(state) || state == ABORT);
+			assert($stable(o_scl));
+			assert($stable(o_sda));
+		end
+	end
+
+	always @(*)
+	if (S_AXI_ARESETN && o_abort)
+		assert(state == RXNAK || state == ABORT);
+
+	always @(posedge S_AXI_ACLK)
+	if (S_AXI_ARESETN && $past(S_AXI_ARESETN))
+	begin
+		if ($rose(state == ABORT))
+		begin
+			assert(o_abort);	// Collision
+		end else if ($rose(state == RXNAK))
+		begin
+			assert(o_abort);	// Failed NAK
+		end else
+			assert(!o_abort);
 	end
 	// }}}
 	////////////////////////////////////////////////////////////////////////
