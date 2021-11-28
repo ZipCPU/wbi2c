@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
 // Filename:	lli2cm.v
-//
+// {{{
 // Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
 //
 // Purpose:	This is a lower level I2C driver for a master I2C byte-wise
@@ -14,11 +14,11 @@
 //		Gisselquist Technology, LLC
 //
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (C) 2017, Gisselquist Technology, LLC
-//
+// }}}
+// Copyright (C) 2017-2021, Gisselquist Technology, LLC
+// {{{
 // This program is free software (firmware): you can redistribute it and/or
-// modify it under the terms of  the GNU General Public License as published
+// modify it under the terms of the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or (at
 // your option) any later version.
 //
@@ -31,58 +31,57 @@
 // with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
 // target there if the PDF file isn't present.)  If not, see
 // <http://www.gnu.org/licenses/> for a copy.
-//
+// }}}
 // License:	GPL, v3, as defined and found on www.gnu.org,
+// {{{
 //		http://www.gnu.org/licenses/gpl.html
-//
 //
 ////////////////////////////////////////////////////////////////////////////////
 //
-//
 `default_nettype	none
-//
-//
-`define I2CMIDLE		4'h0
-`define I2CMSTART		4'h1
-`define I2CMBIT_SET		4'h2
-`define I2CMBIT_POSEDGE		4'h3
-`define I2CMBIT_NEGEDGE		4'h4
-`define I2CMBIT_CLR		4'h5
-`define I2CMACK_SET		4'h6
-`define I2CMACK_POSEDGE		4'h7
-`define I2CMACK_NEGEDGE		4'h8
-`define I2CMACK_CLR		4'h9
-`define I2CMRESTART		4'ha
-`define I2CMRESTART_POSEDGE	4'hb
-`define I2CMRESTART_NEGEDGE	4'hc
-`define I2CMSTOP		4'hd
-`define I2CMSTOPPD		4'he
-`define I2CMFINAL		4'hf
-//
-//
-module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
-				o_ack, o_busy, o_err, o_data,
-			i_scl, i_sda, o_scl, o_sda, o_dbg);
-	parameter	[5:0]	TICKBITS		 = 20;
-	parameter	[(TICKBITS-1):0] CLOCKS_PER_TICK = 20'd1000;
-	parameter	[0:0]		PROGRAMMABLE_RATE= 1'b1;
-	input	wire		i_clk;
-	//
-	input	wire	[(TICKBITS-1):0]	i_clocks;
-	//
-	input	wire		i_cyc, i_stb, i_we;
-	input	wire	[7:0]	i_data;
-	output	reg		o_ack, o_busy, o_err;
-	output	reg	[7:0]	o_data;
-	input	wire		i_scl, i_sda;
-	output	reg		o_scl, o_sda;
-	output	wire	[31:0]	o_dbg;
+// }}}
+module lli2cm #(
+		// {{{
+		parameter	[5:0]	TICKBITS		 = 20,
+		parameter	[(TICKBITS-1):0] CLOCKS_PER_TICK = 20'd1000,
+		parameter	[0:0]		PROGRAMMABLE_RATE= 1'b1
+		// }}}
+	) (
+		// {{{
+		input	wire		i_clk,
+		//
+		input	wire	[(TICKBITS-1):0]	i_clocks,
+		//
+		input	wire		i_cyc, i_stb, i_we,
+		input	wire	[7:0]	i_data,
+		output	reg		o_ack, o_busy, o_err,
+		output	reg	[7:0]	o_data,
+		input	wire		i_scl, i_sda,
+		output	reg		o_scl, o_sda,
+		output	wire	[31:0]	o_dbg
+		// }}}
+	);
+
+	// Local declarations
+	// {{{
+	localparam [3:0]	I2CMIDLE	= 4'h0,
+				I2CMSTART	= 4'h1,
+				I2CMBIT_SET	= 4'h2,
+				I2CMBIT_POSEDGE	= 4'h3,
+				I2CMBIT_NEGEDGE	= 4'h4,
+				I2CMBIT_CLR	= 4'h5,
+				I2CMACK_SET	= 4'h6,
+				I2CMACK_POSEDGE	= 4'h7,
+				I2CMACK_NEGEDGE	= 4'h8,
+				I2CMACK_CLR	= 4'h9,
+				I2CMRESTART	= 4'ha,
+				I2CMRESTART_POSEDGE= 4'hb,
+				I2CMRESTART_NEGEDGE= 4'hc,
+				I2CMSTOP	= 4'hd,
+				I2CMSTOPPD	= 4'he,
+				I2CMFINAL	= 4'hf;
 
 	reg	[(TICKBITS-1):0]	clocks_per_tick;
-	always @(posedge i_clk)
-		clocks_per_tick <= (PROGRAMMABLE_RATE) ? i_clocks
-				: CLOCKS_PER_TICK;
-
 
 	reg	[3:0]	state;
 	reg	[(TICKBITS-1):0]	clock;
@@ -90,8 +89,20 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 	reg	[2:0]	nbits;
 	reg	[7:0]	r_data;
 
-	// Synchronize any asynchronous inputs
 	reg	q_scl, q_sda, ck_scl, ck_sda, lst_scl, lst_sda;
+
+	reg	start_bit, stop_bit, channel_busy;
+	reg		watchdog_timeout;
+	reg	[27:0]	watchdog;
+
+	always @(posedge i_clk)
+		clocks_per_tick <= (PROGRAMMABLE_RATE) ? i_clocks
+				: CLOCKS_PER_TICK;
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Synchronize any asynchronous inputs
+	// {{{
 	initial	q_scl   = 1'b1;
 	initial	q_sda   = 1'b1;
 	initial	ck_scl  = 1'b1;
@@ -108,8 +119,10 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 		ck_sda  <= q_sda;
 		lst_sda <= ck_sda;
 	end
+	// }}}
 
-	reg	start_bit, stop_bit, channel_busy;
+	// start_bit, stop_bit, channel_busy
+	// {{{
 	initial	start_bit = 1'b0;
 	initial	stop_bit  = 1'b0;
 	initial	channel_busy = 1'b0;
@@ -122,9 +135,10 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 		else if (stop_bit)
 			channel_busy <= 1'b0;
 	end
+	// }}}
 
-	reg		watchdog_timeout;
-	reg	[27:0]	watchdog;
+	// Watchdog, and watchdog_timeout
+	// {{{
 	always @(posedge i_clk)
 	begin
 		if (!channel_busy)
@@ -133,11 +147,19 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 			watchdog <= watchdog + 1'b1;
 		watchdog_timeout <= (&watchdog);
 	end
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Generate a clock we can use
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
 
 	initial	clock = CLOCKS_PER_TICK;
 	initial	zclk  = 1'b1;
 	always @(posedge i_clk)
-		if (state == `I2CMIDLE)
+		if (state == I2CMIDLE)
 		begin
 			if (watchdog_timeout)
 			begin
@@ -159,8 +181,15 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 			clock <= clock - 1'b1;
 			zclk <= (clock == 1);
 		end
-
-	initial	state  = `I2CMIDLE;
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Massive state machine
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
+	initial	state  = I2CMIDLE;
 	initial	o_ack  = 1'b0;		
 	initial	o_busy = 1'b0;
 	initial	r_cyc  = 1'b1;
@@ -176,7 +205,7 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 		o_busy <= 1'b1;
 		r_cyc <= (r_cyc) && (i_cyc);
 		if (zclk) case(state)
-			`I2CMIDLE: begin
+			I2CMIDLE: begin
 				r_err <= 1'b0;
 				nbits <= 3'h0;
 				r_cyc <= i_cyc;
@@ -186,136 +215,137 @@ module lli2cm(i_clk, i_clocks, i_cyc, i_stb, i_we, i_data,
 					r_data <= i_data;
 					r_we   <= i_we; 
 					nbits  <= 0;
-					state  <= `I2CMSTART;
+					state  <= I2CMSTART;
 					o_sda  <= 1'b0;
 				end else if (watchdog_timeout)
 				begin
 					o_sda <= 1'b0;
 					o_scl <= 1'b0;
-					state  <= `I2CMSTOP;
+					state  <= I2CMSTOP;
 				end else
 					o_busy <= 1'b0;
 			    end
-			`I2CMSTART: begin
-				state <= `I2CMBIT_SET;
+			I2CMSTART: begin
+				state <= I2CMBIT_SET;
 				o_sda <= 1'b0;
 				o_scl <= 1'b0;
 			    end
-			`I2CMBIT_SET: begin
+			I2CMBIT_SET: begin
 				o_sda <= (r_we)?r_data[7] : 1'b1;
 				if (r_we)
 					r_data <= { r_data[6:0], ck_sda };
 				nbits <= nbits - 1'b1;
-				state <= `I2CMBIT_POSEDGE;
+				state <= I2CMBIT_POSEDGE;
 				end
-			`I2CMBIT_POSEDGE: begin
+			I2CMBIT_POSEDGE: begin
 				if (!r_we)
 					r_data <= { r_data[6:0], ck_sda };
 				o_scl <= 1'b1;
 				r_err <= (r_err)||((r_we)&&(o_sda != ck_sda));
-				state <= `I2CMBIT_NEGEDGE;
+				state <= I2CMBIT_NEGEDGE;
 				end
-			`I2CMBIT_NEGEDGE: begin
+			I2CMBIT_NEGEDGE: begin
 				if (ck_scl)
 				    begin
 					o_scl <= 1'b0;
-					state <= `I2CMBIT_CLR;
+					state <= I2CMBIT_CLR;
 				    end
 				end
-			`I2CMBIT_CLR: begin
+			I2CMBIT_CLR: begin
 				if (nbits != 3'h0)
-					state <= `I2CMBIT_SET;
+					state <= I2CMBIT_SET;
 				else if ((!r_we)&&((!i_stb)||(!r_cyc)))
-					state <= `I2CMSTOP;
+					state <= I2CMSTOP;
 				else
-					state <= `I2CMACK_SET;
+					state <= I2CMACK_SET;
 				end
-			`I2CMACK_SET: begin
+			I2CMACK_SET: begin
 					o_sda <= (r_we) ? 1'b1 : 1'b0;
-					state <= `I2CMACK_POSEDGE;
+					state <= I2CMACK_POSEDGE;
 				end
-			`I2CMACK_POSEDGE: begin
+			I2CMACK_POSEDGE: begin
 					o_scl <= 1'b1;
-					state <= `I2CMACK_NEGEDGE;
+					state <= I2CMACK_NEGEDGE;
 				end
-			`I2CMACK_NEGEDGE: begin
+			I2CMACK_NEGEDGE: begin
 					if (ck_scl)
 					begin
 						o_scl <= 1'b0;
 						r_err <= (r_err)||((r_we)&&(ck_sda));
-						state <= `I2CMACK_CLR;
+						state <= I2CMACK_CLR;
 					end
 				end
-			`I2CMACK_CLR: begin
+			I2CMACK_CLR: begin
 				o_err  <= r_err;
 				o_data <= r_data;
 				o_ack  <= 1'b1;
 				o_sda  <= 1'b0;
 				o_scl  <= 1'b0;
 				if (r_err)
-					state <= `I2CMSTOP;
+					state <= I2CMSTOP;
 				else if ((i_stb)&&(r_cyc)&&(i_cyc))
 				begin
 					o_busy <= 1'b0;
 					r_we   <= i_we;
 					r_data <= i_data;
 				//	if (r_we != i_we)
-				//		state <= `I2CMRESTART;
+				//		state <= I2CMRESTART;
 				//	else
-						state <= `I2CMSTART;
+						state <= I2CMSTART;
 					nbits <= 0;
 				end else if ((i_cyc)&&(i_stb)&&(!r_cyc))
-					state <= `I2CMRESTART;
+					state <= I2CMRESTART;
 				else // if (!i_cyc)
-					state <= `I2CMSTOP;
+					state <= I2CMSTOP;
 				end
-			`I2CMRESTART: begin
+			I2CMRESTART: begin
 				o_sda <= 1'b1;
-				state <= `I2CMRESTART_POSEDGE;
+				state <= I2CMRESTART_POSEDGE;
 				end
-			`I2CMRESTART_POSEDGE: begin
+			I2CMRESTART_POSEDGE: begin
 				o_sda <= 1'b1;
 				o_scl <= 1'b1;
-				state <= `I2CMRESTART_NEGEDGE;
+				state <= I2CMRESTART_NEGEDGE;
 				end
-			`I2CMRESTART_NEGEDGE: begin
+			I2CMRESTART_NEGEDGE: begin
 				o_sda <= 1'b1;
 				o_scl <= 1'b1;
 				if (ck_scl)
 				  begin
-					state <= `I2CMSTART;
+					state <= I2CMSTART;
 					o_sda <= 1'b0;
 				  end
 				end
-			`I2CMSTOP: begin
+			I2CMSTOP: begin
 				o_scl <= 1'b0;
 				o_sda <= 1'b0;
 				if ((ck_scl == 1'b0)&&(ck_sda == 1'b0))
 				begin
 					o_scl <= 1'b1;
 					o_sda <= 1'b0; // (No change)
-					state <= `I2CMSTOPPD;
+					state <= I2CMSTOPPD;
 				end
 				end
-			`I2CMSTOPPD: begin
+			I2CMSTOPPD: begin
 				o_scl <= 1'b1;
 				o_sda <= 1'b0;
 				if ((ck_scl)&&(!ck_sda))
 				begin
 					o_sda <= 1'b1;
-					state <= `I2CMFINAL;
+					state <= I2CMFINAL;
 				end
 				end
 			default: begin
 				o_scl <= 1'b1;
 				o_sda <= 1'b1;
 				if (!channel_busy)
-					state <= `I2CMIDLE;
+					state <= I2CMIDLE;
 				else if (watchdog_timeout)
-					state <= `I2CMSTOP;
+					state <= I2CMSTOP;
 				end
 		endcase
 	end
+	// }}}
 
 	assign	o_dbg = { i_cyc, i_cyc, i_stb, 13'h00,
 		1'b0, watchdog_timeout, o_ack, o_busy,
