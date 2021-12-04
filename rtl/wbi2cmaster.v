@@ -55,7 +55,6 @@
 //		bus.
 //
 //
-//
 // Creator:	Dan Gisselquist, Ph.D.
 //		Gisselquist Technology, LLC
 //
