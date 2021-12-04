@@ -667,6 +667,11 @@ module axisi2c #(
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 `ifdef	FORMAL
+`ifdef	I2CCPU
+`define	ASSUME	assert
+`else
+`define	ASSUME	assume
+`endif
 	// Local declarations
 	// {{{
 	reg	f_past_valid;
@@ -677,7 +682,7 @@ module axisi2c #(
 
 	always @(*)
 	if (!f_past_valid)
-		assume(!S_AXI_ARESETN);
+		`ASSUME(!S_AXI_ARESETN);
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -692,13 +697,15 @@ module axisi2c #(
 	always @(*) if (!o_sda) assume(!i_sda);
 
 	always @(posedge S_AXI_ACLK)
-	if (f_past_valid && $past(i_ckedge && o_stretch))
-		assume(i_ckedge);
+	if (f_past_valid && $past(S_AXI_ARESETN && i_ckedge && o_stretch))
+		`ASSUME(i_ckedge);
 
 	always @(posedge S_AXI_ACLK)
-	if (!S_AXI_ARESETN)
-		assume(!i_ckedge);
-	else case({ lst_scl, ck_scl, q_scl, i_scl })
+	if (!S_AXI_ARESETN || !$past(S_AXI_ARESETN))
+	begin
+		if (S_AXI_ARESETN && !$past(S_AXI_ARESETN))
+			`ASSUME(!i_ckedge);
+	end else case({ lst_scl, ck_scl, q_scl, i_scl })
 	4'b0000: begin end
 	4'b0001: assume($past(i_ckedge && o_stretch) || !i_ckedge);
 	4'b0011: assume($past(i_ckedge && o_stretch) || !i_ckedge);
@@ -736,7 +743,7 @@ module axisi2c #(
 	begin
 	end else if (!$past(S_AXI_ARESETN))
 	begin
-		assume(!S_AXIS_TVALID);
+		`ASSUME(!S_AXIS_TVALID);
 
 		assert(!M_AXIS_TVALID);
 
@@ -747,11 +754,11 @@ module axisi2c #(
 		end
 	end else begin
 		if ($past(o_abort))
-			assume(!S_AXIS_TVALID);
+			`ASSUME(!S_AXIS_TVALID);
 		else if ($past(S_AXIS_TVALID && !S_AXIS_TREADY))
 		begin
-			assume(S_AXIS_TVALID);
-			assume($stable(S_AXIS_TDATA));
+			`ASSUME(S_AXIS_TVALID);
+			`ASSUME($stable(S_AXIS_TDATA));
 		end
 
 		if ($past(M_AXIS_TVALID && !M_AXIS_TREADY))

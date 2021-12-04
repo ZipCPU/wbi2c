@@ -1,0 +1,35 @@
+[tasks]
+prf
+cvr
+
+[options]
+prf: mode prove
+cvr: mode cover
+depth 3
+cvr: depth 250
+
+[engines]
+smtbmc
+
+[script]
+read -define ZIPCPU
+read -define I2CCPU
+cvr: read -define COVER
+read -formal faxil_slave.v
+read -formal ffetch.v
+read -formal skidbuffer.v
+read -formal axisi2c.v
+read -formal axili2ccpu.v
+--pycode-begin--
+cmd = "hierarchy -top axili2ccpu"
+output(cmd)
+--pycode-end--
+prep -top axili2ccpu
+
+[files]
+../../rtl/axisi2c.v
+../../rtl/axili2ccpu.v
+../../../../../zipcpu/trunk/bench/formal/ffetch.v
+../../../../wb2axip/trunk/rtl/skidbuffer.v
+../../../../wb2axip/trunk/rtl/axilfetch.v
+../../../../wb2axip/trunk/bench/formal/faxil_slave.v

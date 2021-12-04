@@ -6,12 +6,14 @@ cvr
 prf: mode prove
 cvr: mode cover
 depth 3
+cvr: depth 400
 
 [engines]
 smtbmc
 
 [script]
 read -define ZIPCPU
+read -define I2CCPU
 read -formal fwb_slave.v
 read -formal ffetch.v
 read -formal wbi2ccpu.v

@@ -1,10 +1,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename:	wbi2ccpu.v
+// Filename:	axili2ccpu.v
 // {{{
 // Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
 //
-// Purpose:	
+// Purpose:	This is a copy of the WBI2CCPU, save that it has been modified
+//		to work with AXI4 instead of Wishbone.
 //
 // Registers
 // {{{
@@ -48,7 +49,8 @@
 // }}}
 //
 // Dependencies:
-//	dblfetch.v	From the ZipCPU repo, zipcore branch, rtl/core directory
+//	axilfetch.v	From the wb2axip repo, rtl/ directory
+//	skidbuffer.v	From the wb2axip repo, rtl/ directory
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
@@ -77,12 +79,14 @@
 //
 `default_nettype none
 // }}}
-module	wbi2ccpu #(
+module	axili2ccpu #(
 		// {{{
 		parameter	ADDRESS_WIDTH = 32,
 		parameter	DATA_WIDTH = 32,
-		localparam	AW = ADDRESS_WIDTH,
-		localparam	DW = DATA_WIDTH,
+		parameter	C_AXI_ADDR_WIDTH = ADDRESS_WIDTH,
+		parameter	C_AXI_DATA_WIDTH = DATA_WIDTH,
+		localparam	AW = C_AXI_ADDR_WIDTH,
+		localparam	DW = C_AXI_DATA_WIDTH,
 		parameter [AW-1:0]	RESET_ADDRESS = 0,
 		parameter [0:0]	OPT_START_HALTED = (RESET_ADDRESS == 0),
 `ifdef	FORMAL
@@ -94,27 +98,44 @@ module	wbi2ccpu #(
 		// }}}
 	) (
 		// {{{
-		input	wire	i_clk, i_reset,
+		input	wire		S_AXI_ACLK, S_AXI_ARESETN,
 		// Bus slave interface
 		// {{{
-		input	wire		i_wb_cyc, i_wb_stb, i_wb_we,
-		input	wire	[1:0]	i_wb_addr,
-		input	wire	[31:0]	i_wb_data,
-		input	wire	[3:0]	i_wb_sel,
-		output	wire		o_wb_stall,
-		output	reg		o_wb_ack,
-		output	wire	[31:0]	o_wb_data,
+		input	wire		S_AXI_AWVALID,
+		output	wire		S_AXI_AWREADY,
+		input	wire	[3:0]	S_AXI_AWADDR,
+		input	wire	[2:0]	S_AXI_AWPROT,
+		//
+		input	wire		S_AXI_WVALID,
+		output	wire		S_AXI_WREADY,
+		input	wire	[31:0]	S_AXI_WDATA,
+		input	wire	[3:0]	S_AXI_WSTRB,
+		//
+		output	wire		S_AXI_BVALID,
+		input	wire		S_AXI_BREADY,
+		output	wire	[1:0]	S_AXI_BRESP,
+		//
+		input	wire		S_AXI_ARVALID,
+		output	wire		S_AXI_ARREADY,
+		input	wire	[3:0]	S_AXI_ARADDR,
+		input	wire	[2:0]	S_AXI_ARPROT,
+		//
+		output	wire		S_AXI_RVALID,
+		input	wire		S_AXI_RREADY,
+		output	wire	[31:0]	S_AXI_RDATA,
+		output	wire	[1:0]	S_AXI_RRESP,
 		// }}}
 		// Bus master interface
 		// {{{
-		output	wire		o_pf_cyc, o_pf_stb, o_pf_we,
-		output	wire [AW-$clog2(DATA_WIDTH/8)-1:0]	o_pf_addr,
-		output	wire [DW-1:0]	o_pf_data,
-		output	wire [DW/8-1:0]	o_pf_sel,
-		input	wire		i_pf_stall,
-		input	wire		i_pf_ack,
-		input	wire		i_pf_err,
-		input	wire [DW-1:0]	i_pf_data,
+		output	wire		M_INSN_ARVALID,
+		input	wire		M_INSN_ARREADY,
+		output	wire [AW-1:0]	M_INSN_ARADDR,
+		output	wire	[2:0]	M_INSN_ARPROT,
+		//
+		input	wire		M_INSN_RVALID,
+		output	wire		M_INSN_RREADY,
+		input	wire [DW-1:0]	M_INSN_RDATA,
+		input	wire	[1:0]	M_INSN_RRESP,
 		// }}}
 		// I2C interfacce
 		// {{{
@@ -135,6 +156,9 @@ module	wbi2ccpu #(
 
 	// Local declarations
 	// {{{
+	wire	i_clk = S_AXI_ACLK;
+	wire	i_reset = !S_AXI_ARESETN;
+
 	// Addresses
 	// {{{
 	localparam	[1:0]	ADR_CONTROL = 2'b00,
@@ -193,6 +217,8 @@ module	wbi2ccpu #(
 	reg			r_wait, soft_halt_request, r_halted, r_err;
 	wire			w_stopped;
 
+	reg		s_axi_bvalid, s_axi_rvalid;
+	wire		skd_awvalid, skd_wvalid, skd_arvalid;
 	wire		bus_read, bus_write, bus_override, ovw_ready;
 	wire	[1:0]	bus_write_addr, bus_read_addr;
 	wire	[31:0]	bus_write_data;
@@ -204,31 +230,95 @@ module	wbi2ccpu #(
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
-	// Bus (read) handling
+	// AXI4-lite Bus handling
 	// {{{
 	////////////////////////////////////////////////////////////////////////
 	//
 	//
 
-	assign	bus_write      = i_wb_stb &&  i_wb_we && !o_wb_stall;
-	assign	bus_write_addr = i_wb_addr;
-	assign	bus_write_data = i_wb_data;
-	assign	bus_write_strb = i_wb_sel;
+	// Write address skid buffer
+	skidbuffer #(
+		// {{{
+		.OPT_LOWPOWER(OPT_LOWPOWER),
+		.OPT_OUTREG(0),
+		.DW(2)
+		// }}}
+	) awskd (
+		// {{{
+		.i_clk(S_AXI_ACLK), .i_reset(!S_AXI_ARESETN),
+		.i_valid(S_AXI_AWVALID), .o_ready(S_AXI_AWREADY),
+			.i_data(S_AXI_AWADDR[3:2]),
+		.o_valid(skd_awvalid), .i_ready(bus_write),
+			.o_data(bus_write_addr)
+		// }}}
+	);
 
-	assign	bus_read       = i_wb_stb && !i_wb_we && !o_wb_stall;
-	assign	bus_read_addr  = i_wb_addr;
+	// Write data skid buffer
+	skidbuffer #(
+		// {{{
+		.OPT_LOWPOWER(OPT_LOWPOWER),
+		.OPT_OUTREG(0),
+		.DW(32+32/8)
+		// }}}
+	) wskd (
+		// {{{
+		.i_clk(S_AXI_ACLK), .i_reset(!S_AXI_ARESETN),
+		.i_valid(S_AXI_WVALID), .o_ready(S_AXI_WREADY),
+			.i_data({ S_AXI_WDATA, S_AXI_WSTRB }),
+		.o_valid(skd_wvalid), .i_ready(bus_write),
+			.o_data({ bus_write_data, bus_write_strb })
+		// }}}
+	);
 
-	assign	o_wb_stall = 1'b0; // w_stopped && !insn_ready;
+	// Read address skid buffer
+	skidbuffer #(
+		// {{{
+		.OPT_LOWPOWER(OPT_LOWPOWER),
+		.OPT_OUTREG(0),
+		.DW(2)
+		// }}}
+	) arskd (
+		// {{{
+		.i_clk(S_AXI_ACLK), .i_reset(!S_AXI_ARESETN),
+		.i_valid(S_AXI_ARVALID), .o_ready(S_AXI_ARREADY),
+			.i_data(S_AXI_ARADDR[3:2]),
+		.o_valid(skd_arvalid), .i_ready(bus_read),
+			.o_data(bus_read_addr)
+		// }}}
+	);
 
-	initial	o_wb_ack = 1'b0;
+
+	assign	bus_write      = skd_awvalid && skd_wvalid && (!S_AXI_BVALID || S_AXI_BREADY);
+	assign	bus_read       = skd_arvalid && (!S_AXI_RVALID || S_AXI_RREADY);
+
+	// Write response
+	// {{{
+	initial	s_axi_bvalid = 1'b0;
 	always @(posedge i_clk)
 	if (i_reset)
-		o_wb_ack <= 1'b0;
-	else
-		o_wb_ack <= i_wb_stb && !o_wb_stall;
+		s_axi_bvalid <= 1'b0;
+	else if (bus_write)
+		s_axi_bvalid <= 1'b1;
+	else if (S_AXI_BREADY)
+		s_axi_bvalid <= 1'b0;
+
+	assign	S_AXI_BVALID = s_axi_bvalid;
+	// }}}
+
+	assign	S_AXI_BRESP = 2'b00;
+	assign	S_AXI_RRESP = 2'b00;
 
 	// Read handling
 	// {{{
+	initial	s_axi_rvalid = 1'b0;
+	always @(posedge i_clk)
+	if (i_reset)
+		s_axi_rvalid <= 0;
+	else if (bus_read)
+		s_axi_rvalid <= 1;
+	else if (S_AXI_RREADY)
+		s_axi_rvalid <= 0;
+
 	always @(posedge i_clk)
 	if (OPT_LOWPOWER && i_reset)
 		bus_read_data <= 0;
@@ -256,10 +346,11 @@ module	wbi2ccpu #(
 
 		// if(OPT_LOWPOWER && !bus_read)
 		//	bus_read_data <= 0;
-	end else if (OPT_LOWPOWER)
+	end else if (OPT_LOWPOWER && S_AXI_RREADY)
 		bus_read_data <= 0;
 
-	assign	o_wb_data = bus_read_data;
+	assign	S_AXI_RVALID = s_axi_rvalid;
+	assign	S_AXI_RDATA  = bus_read_data;
 	// }}}
 
 	assign	bus_override   = r_halted && bus_write
@@ -275,28 +366,32 @@ module	wbi2ccpu #(
 
 	assign	cpu_reset = r_halted;
 	assign	cpu_clear_cache = 1'b0;
-	assign	o_pf_sel = -1;
 
 `ifndef	FORMAL
-	dblfetch #(
+	axilfetch #(
 		// {{{
-		.ADDRESS_WIDTH(AW),
-		.DATA_WIDTH(DW),
-		.INSN_WIDTH(8)
+		.C_AXI_ADDR_WIDTH(AW),
+		.C_AXI_DATA_WIDTH(DW),
+		.INSN_WIDTH(8),
+		.FETCH_LIMIT(2)
 		// }}}
 	) u_fetch (
 		// {{{
-		.i_clk(i_clk), .i_reset(i_reset || cpu_reset),
-		//
+		.S_AXI_ACLK(S_AXI_ACLK), .S_AXI_ARESETN(S_AXI_ARESETN),
+		// {{{
+		.i_cpu_reset(cpu_reset),
 		.i_new_pc(cpu_new_pc), .i_clear_cache(cpu_clear_cache),
 		.i_ready(pf_ready), .i_pc(pf_jump_addr),
 		.o_valid(pf_valid), .o_illegal(pf_illegal),
 		.o_insn(pf_insn), .o_pc(pf_insn_addr),
-		//
-		.o_wb_cyc(o_pf_cyc), .o_wb_stb(o_pf_stb), .o_wb_we(o_pf_we),
-		.o_wb_addr(o_pf_addr), .o_wb_data(o_pf_data),
-		.i_wb_stall(i_pf_stall), .i_wb_ack(i_pf_ack),
-			.i_wb_err(i_pf_err), .i_wb_data(i_pf_data)
+		// }}}
+		// AXI-lite bus master interface
+		// {{{
+		.M_AXI_ARVALID(M_INSN_ARVALID), .M_AXI_ARREADY(M_INSN_ARREADY),
+		.M_AXI_ARADDR(M_INSN_ARADDR), .M_AXI_ARPROT(M_INSN_ARPROT),
+		.M_AXI_RVALID(M_INSN_RVALID), .M_AXI_RREADY(M_INSN_RREADY),
+		.M_AXI_RDATA(M_INSN_RDATA), .M_AXI_RRESP(M_INSN_RRESP)
+		// }}}
 		// }}}
 	);
 `endif
@@ -613,7 +708,6 @@ module	wbi2ccpu #(
 
 	assign	s_tvalid = insn_valid && !insn[11] && !r_wait;
 
-`ifndef	FORMAL
 	axisi2c #(
 		// {{{
 		.OPT_WATCHDOG(0),
@@ -644,15 +738,14 @@ module	wbi2ccpu #(
 		.o_scl(o_i2c_scl), .o_sda(o_i2c_sda)
 		// }}}
 	);
-`endif
-
 	// }}}
 
 	// Keep Verilator happy
 	// {{{
 	// Verilator lint_off UNUSED
 	wire	unused;
-	assign	unused = &{ 1'b0, i_wb_cyc };
+	assign	unused = &{ 1'b0, S_AXI_AWADDR[1:0], S_AXI_ARADDR[1:0],
+			S_AXI_AWPROT, S_AXI_ARPROT };
 	// Verilator lint_off UNUSED
 	// }}}
 ////////////////////////////////////////////////////////////////////////////////
@@ -666,7 +759,8 @@ module	wbi2ccpu #(
 ////////////////////////////////////////////////////////////////////////////////
 `ifdef	FORMAL
 	reg	f_past_valid;
-	wire	[1:0]	fwb_nreqs, fwb_nacks, fwb_outstanding;
+	wire	[1:0]	faxil_rd_outstanding, faxil_wr_outstanding,
+			faxil_awr_outstanding;
 	wire	[7:0]	f_const_insn;
 	wire		f_const_illegal;
 	wire [AW-1:0]	f_address, f_const_addr;
@@ -688,28 +782,42 @@ module	wbi2ccpu #(
 	//
 	//
 
-	fwb_slave #(
+	faxil_slave #(
 		// {{{
-		.AW(2), .DW(32), .F_MAX_STALL(2), .F_MAX_ACK_DELAY(2),
+		.C_AXI_DATA_WIDTH(32), .C_AXI_ADDR_WIDTH(4),
+		// .F_MAX_ACK_DELAY(2),
 		.F_LGDEPTH(2)
 		// }}}
 	) slv (
 		// {{{
-		.i_clk(i_clk), .i_reset(i_reset),
-		.i_wb_cyc(i_wb_cyc), .i_wb_stb(i_wb_stb), .i_wb_addr(i_wb_addr),
-		.i_wb_data(i_wb_data), .i_wb_sel(i_wb_sel), .i_wb_ack(o_wb_ack),
-		.i_wb_stall(o_wb_stall), .i_wb_idata(o_wb_data),
-		.i_wb_err(1'b0),
+		.i_clk(i_clk), .i_axi_reset_n(S_AXI_ARESETN),
+		.i_axi_awvalid(S_AXI_AWVALID), .i_axi_awready(S_AXI_AWREADY),
+			.i_axi_awaddr(S_AXI_AWADDR),.i_axi_awprot(S_AXI_AWPROT),
+		.i_axi_wvalid(S_AXI_WVALID), .i_axi_wready(S_AXI_WREADY),
+			.i_axi_wdata(S_AXI_WDATA),.i_axi_wstrb(S_AXI_WSTRB),
+		.i_axi_bvalid(S_AXI_BVALID), .i_axi_bready(S_AXI_BREADY),
+			.i_axi_bresp(S_AXI_BRESP),
+		.i_axi_arvalid(S_AXI_ARVALID), .i_axi_arready(S_AXI_ARREADY),
+			.i_axi_araddr(S_AXI_ARADDR),.i_axi_arprot(S_AXI_ARPROT),
+		.i_axi_rvalid(S_AXI_RVALID), .i_axi_rready(S_AXI_RREADY),
+			.i_axi_rdata(S_AXI_RDATA),.i_axi_rresp(S_AXI_RRESP),
 		//
-		.f_nreqs(fwb_nreqs),
-		.f_nacks(fwb_nacks),
-		.f_outstanding(fwb_outstanding)
+		.f_axi_rd_outstanding(faxil_rd_outstanding),
+		.f_axi_wr_outstanding(faxil_wr_outstanding),
+		.f_axi_awr_outstanding(faxil_awr_outstanding)
 		// }}}
 	);
 
 	always @(*)
-	if (f_past_valid && i_wb_cyc)
-		assert(fwb_outstanding == (o_wb_ack ? 1:0));
+	if (f_past_valid)
+	begin
+		assert(faxil_awr_outstanding == (s_axi_bvalid ? 1:0)
+			+ (S_AXI_AWREADY ? 0:1));
+		assert(faxil_wr_outstanding  == (s_axi_bvalid ? 1:0)
+			+ (S_AXI_WREADY ? 0:1));
+		assert(faxil_rd_outstanding  == (s_axi_rvalid ? 1:0)
+			+ (S_AXI_ARREADY ? 0:1));
+	end
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -759,7 +867,7 @@ module	wbi2ccpu #(
 	////////////////////////////////////////////////////////////////////////
 	//
 	//
-
+`ifndef	I2CCPU
 	(* anyseq *) wire	m_tvalid, m_tlast;
 	(* anyseq *) wire [7:0]	m_tdata;
 
@@ -793,6 +901,7 @@ module	wbi2ccpu #(
 	assign	M_AXIS_TVALID = m_tvalid;
 	assign	M_AXIS_TDATA  = m_tdata;
 	assign	M_AXIS_TLAST  = m_tlast;
+`endif
 	// }}}
 `endif
 // }}}
