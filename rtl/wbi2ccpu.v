@@ -9,17 +9,52 @@
 // Registers
 // {{{
 //	0. Stop control
-//		SDA,SCL status & override
-//		Soft halt request (halt on STOP or o.w. inactive)
-//		Hard halt request (halt in any state)
-//		Watchdog timeout
-//		Issue direct instructions if not active
-//		Halt control
+//		[31:28]: half_insn.  If the half_valid flag is true, there
+//			is another half to this instruction contained in these
+//			bits.
+//		[27:24]: Unused/Reserved
+//		[23]: r_wait - True if the controller is waiting on a
+//			synchronization signal before issuing its next command
+//		[22]: Soft halt request (halt on STOP or o.w. inactive)
+//			Writes that set the soft halt bit will cause the I2C
+//			port to halt once the current command is complete.
+//		[21]: r_aborted - a user instruction was aborted.  Further
+//			user (bus) instructions will be ignored until this
+//			bit is cleared by writing to it.
+//		[20]: Err bit
+//			True if an instruction read has returned a bus error.
+//			The error may be cleared by writing a '1' to this bit,
+//			or by writing to the address register.
+//		[19]: Hard halt request (halt in any state)
+//			Writes that set this bit will cause the controller
+//			to immediately halt in whatever state the controller
+//			is in.  Any currently issued command will run to
+//			completion.
+//			Reads return 1'b1 if the controller is not running a
+//			script from memory.  This is almost the same as if it
+//			were halted, but not quite, since this bit will not
+//			clear following an override request.
+//		[18]: insn_valid - An instruction has been read and queued that
+//			hasn't been issued.  An attempt to write to the override
+//			register might override this instruction
+//		[17]: half_valid - a half instruction is waiting to be issued.
+//		[16]: imm_cycle - the next word the controller receives will
+//			be an immediate byte
+//		[15:14]: Currently output/commanded SCL, SDA respectivvely
+//		[13:12]: Input/incoming SCL, SDA respectively
+//		[11: 0]: Returns the currently running instruction.
 //	1. Override
-//		Writes instructions to the port
+//		Writes instructions to bits [7:0] of this port
+//		bit [9] will be true on read if a valid byte can be read
+//			This bit will be cleared on any write to ADR_OVERRIDE
+//		bit [8] will be true on read if TLAST is set on a valid request
+//		bit [7:0] on read will return the last data read from the device
 //	2. Address control
 //		Writes set the address, unstop the CPU, and cause a jump to that
-//			address
+//			address.  Writes will also set the abort address and
+//			the jump target, so that on either an abort abort or a
+//			the command restarts right where the CPU set it up to
+//			start.
 //		Reads return the current address
 //	3. Clock control
 //		(May not be required)
@@ -52,7 +87,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2021, Gisselquist Technology, LLC
+// Copyright (C) 2021-2022, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -79,12 +114,21 @@
 // }}}
 module	wbi2ccpu #(
 		// {{{
-		parameter	ADDRESS_WIDTH = 32,
+		parameter	ADDRESS_WIDTH = 29,
 		parameter	DATA_WIDTH = 32,
+		parameter	I2C_WIDTH = 8,
 		localparam	AW = ADDRESS_WIDTH,
 		localparam	DW = DATA_WIDTH,
-		parameter [AW-1:0]	RESET_ADDRESS = 0,
+		localparam	RW = I2C_WIDTH,
+		localparam	BAW = AW + $clog2(DATA_WIDTH/8), // Byte addr w
+		parameter [BAW-1:0]	RESET_ADDRESS = 0,
 		parameter [0:0]	OPT_START_HALTED = (RESET_ADDRESS == 0),
+		// If OPT_MANUAL is set, the override register may be used
+		// to take direct and manual control over the I2C ports, and
+		// so to directly control the wires without any logic in the
+		// way.
+		parameter [0:0]	OPT_MANUAL = 1'b1,
+		parameter		OPT_WATCHDOG = 0,
 `ifdef	FORMAL
 		parameter [11:0]	DEF_CKCOUNT = 2,
 `else
@@ -108,7 +152,7 @@ module	wbi2ccpu #(
 		// Bus master interface
 		// {{{
 		output	wire		o_pf_cyc, o_pf_stb, o_pf_we,
-		output	wire [AW-$clog2(DATA_WIDTH/8)-1:0]	o_pf_addr,
+		output	wire [AW-1:0]	o_pf_addr,
 		output	wire [DW-1:0]	o_pf_data,
 		output	wire [DW/8-1:0]	o_pf_sel,
 		input	wire		i_pf_stall,
@@ -125,11 +169,12 @@ module	wbi2ccpu #(
 		//  {{{
 		output	wire			M_AXIS_TVALID,
 		input	wire			M_AXIS_TREADY,
-		output	wire	[7:0]		M_AXIS_TDATA,
+		output	wire	[RW-1:0]	M_AXIS_TDATA,
 		output	wire			M_AXIS_TLAST,
 		// OPT output wire		M_AXIS_TABORT,
 		// }}}
-		input	wire	i_sync_signal
+		input	wire		i_sync_signal,
+		output	wire	[31:0]	o_debug
 		// }}}
 	);
 
@@ -145,15 +190,17 @@ module	wbi2ccpu #(
 
 	// Command register bit enumeration(s)
 	// {{{
-	localparam	HALT_BIT = 16,
-			ERR_BIT = 17,
-			SOFTHALT_BIT = 18;
-			//
-			// WAIT_BIT = 19,
-			// IMMCYCLE_BIT = 20,
-			// HALFVALID_BIT = 21;
+	localparam	// IMMCYCLE_BIT = 16,
+			// HALFVLD_BIT  = 17,
+			// INSNVLD_BIT  = 18,
+			HALT_BIT     = 19,
+			ERR_BIT      = 20,
+			ABORT_BIT    = 21,
+			SOFTHALT_BIT = 22;
+			// WAIT_BIT  = 23;
 	// }}}
-	localparam	OVW_VALID = 9;
+	localparam	OVW_VALID  =  9;
+	localparam	MANUAL_BIT = 11;
 
 	// Instruction set / Commands
 	// {{{
@@ -174,33 +221,42 @@ module	wbi2ccpu #(
 
 	wire			cpu_reset, cpu_clear_cache;
 	reg			cpu_new_pc;
-	reg	[AW-1:0]	pf_jump_addr;
+	reg	[BAW-1:0]	pf_jump_addr;
 	wire			pf_valid;
 	wire			pf_ready;
 	wire	[7:0]		pf_insn;
-	wire	[AW-1:0]	pf_insn_addr;
+	wire	[BAW-1:0]	pf_insn_addr;
 	wire			pf_illegal;
 
 	reg			half_valid, imm_cycle;
+
+	reg			next_valid;
+	reg	[7:0]		next_insn;
 
 	wire			insn_ready, half_ready, i2c_abort;
 	reg			insn_valid;
 	reg	[11:0]		insn;
 	reg	[3:0]		half_insn;
-	reg			i2c_ckedge, i2c_stretch;
+	reg			i2c_ckedge;
+	wire			i2c_stretch;
 	reg	[11:0]		i2c_ckcount, ckcount;
-	reg	[AW-1:0]	abort_address, jump_target;
-	reg			r_wait, soft_halt_request, r_halted, r_err;
-	wire			w_stopped;
+	reg	[BAW-1:0]	abort_address, jump_target;
+	reg			r_wait, soft_halt_request, r_halted, r_err,
+				r_aborted;
+	wire			r_manual, r_sda, r_scl;
+	wire			w_stopped, w_sda, w_scl;
 
-	wire		bus_read, bus_write, bus_override, ovw_ready;
+	wire		bus_read, bus_write, bus_override, bus_manual,
+			ovw_ready, bus_jump;
 	wire	[1:0]	bus_write_addr, bus_read_addr;
 	wire	[31:0]	bus_write_data;
 	wire	[3:0]	bus_write_strb;
 	reg	[31:0]	bus_read_data;
 
-	wire	s_tvalid;
+	wire		s_tvalid, s_tready;
 	reg	[9:0]	ovw_data;
+	wire	[31:0]	w_control;
+
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -218,7 +274,7 @@ module	wbi2ccpu #(
 	assign	bus_read       = i_wb_stb && !i_wb_we && !o_wb_stall;
 	assign	bus_read_addr  = i_wb_addr;
 
-	assign	o_wb_stall = 1'b0; // w_stopped && !insn_ready;
+	assign	o_wb_stall = 1'b0; // (i_wb_we && i_wb_addr == BUS_OVERRIDE && !ovw_ready)
 
 	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
@@ -229,6 +285,19 @@ module	wbi2ccpu #(
 
 	// Read handling
 	// {{{
+	assign	w_control = {
+			half_insn, 3'h0, r_manual,
+			//
+			r_wait, soft_halt_request,
+				r_aborted, r_err, r_halted,
+			insn_valid, half_valid, imm_cycle,
+			//
+			o_i2c_scl, o_i2c_sda,
+				i_i2c_scl, i_i2c_sda,
+			//
+			insn	// 12 bits
+		};
+
 	always @(posedge i_clk)
 	if (OPT_LOWPOWER && i_reset)
 		bus_read_data <= 0;
@@ -236,20 +305,11 @@ module	wbi2ccpu #(
 	begin
 		bus_read_data <= 0;
 		case(bus_read_addr)
-		ADR_CONTROL:	bus_read_data <= {
-					half_insn, 4'h0,
-					//
-					2'b0, half_valid, imm_cycle,
-					r_wait, soft_halt_request,
-						r_err, r_halted,
-					//
-					o_i2c_scl, o_i2c_sda,
-						i_i2c_scl, i_i2c_sda,
-					//
-					insn	// 12 bits
-					};
-		ADR_OVERRIDE:	bus_read_data[9:0] <= ovw_data;
-		ADR_ADDRESS:	bus_read_data[AW-1:0] <= pf_insn_addr;
+		ADR_CONTROL:	bus_read_data <= w_control;
+		ADR_OVERRIDE:	bus_read_data[15:0] <= {
+					r_scl, r_sda, i_i2c_scl, i_i2c_sda,
+					r_manual, r_aborted, ovw_data };
+		ADR_ADDRESS:	bus_read_data[BAW-1:0] <= pf_insn_addr;
 		ADR_CKCOUNT:	bus_read_data[11:0] <= ckcount;
 		// default:	bus_read_data <= 0;
 		endcase
@@ -262,8 +322,14 @@ module	wbi2ccpu #(
 	assign	o_wb_data = bus_read_data;
 	// }}}
 
-	assign	bus_override   = r_halted && bus_write
+	assign	bus_override   = r_halted && !r_aborted && bus_write
 			&& bus_write_addr == ADR_OVERRIDE && bus_write_strb[0];
+	assign	bus_manual   = OPT_MANUAL && bus_write
+				&& bus_write_addr == ADR_OVERRIDE
+				&& bus_write_data[MANUAL_BIT]
+				&& bus_write_strb[MANUAL_BIT/8];
+	assign	bus_jump = bus_write && bus_write_addr == ADR_ADDRESS
+				&& (&bus_write_strb) && r_halted && !r_aborted;
 	// }}}
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -280,7 +346,7 @@ module	wbi2ccpu #(
 `ifndef	FORMAL
 	dblfetch #(
 		// {{{
-		.ADDRESS_WIDTH(AW),
+		.ADDRESS_WIDTH(BAW),
 		.DATA_WIDTH(DW),
 		.INSN_WIDTH(8)
 		// }}}
@@ -310,39 +376,93 @@ module	wbi2ccpu #(
 	//
 	//
 
+	// next_valid, next_insn
+	// {{{
+	always @(*)
+	begin
+		if (r_halted)
+		begin
+			next_valid = bus_override && ovw_ready;
+			if (bus_manual)
+				next_valid = 1'b0;
+			next_insn  = bus_write_data[7:0];
+		end else begin
+			next_valid = pf_valid && pf_ready;
+			if (insn_valid && insn[11:8] == CMD_HALT)
+				next_valid = 1'b0;
+			next_insn  = pf_insn;
+		end
+
+		if (!imm_cycle && next_insn[7:4] == CMD_NOOP)
+			next_insn = { next_insn[3:0], CMD_NOOP };
+
+		if (bus_jump)
+			next_valid = 1'b0;
+	end
+`ifdef	FORMAL
+	always @(*)
+	if (insn_valid && !s_tready)
+	begin
+		assert(!next_valid);
+		assert(!pf_ready);
+		assert(!ovw_ready);
+	end
+
+	always @(*)
+	if (!i_reset && !insn_valid && !r_manual)
+	begin
+		assert(pf_ready  == (!r_halted && !r_wait && !cpu_new_pc && !r_manual));
+		assert(ovw_ready);
+	end
+`endif
+	// }}}
+
 	// half_valid
 	// {{{
 	always @(posedge i_clk)
-	if (i_reset || i2c_abort)
+	if (i_reset || i2c_abort || r_manual || bus_manual)
 		half_valid <= 1'b0;
-	else if (!imm_cycle && pf_valid && pf_ready
-				&& pf_insn[7:4] != CMD_SEND
-				&& pf_insn[3:0] != CMD_NOOP)
-		half_valid <= 1'b1;
-	else if (!imm_cycle && bus_override && ovw_ready
-			&& bus_write_data[7:4] != CMD_SEND
-			&& bus_write_data[3:0] != CMD_NOOP)
-		half_valid <= 1'b1;
-	else if (bus_write && bus_write_addr == ADR_ADDRESS)
+	else if (!imm_cycle && next_valid)
+	begin
 		half_valid <= 1'b0;
-	else if (half_ready)
+
+		if (next_insn[7:4] != CMD_SEND
+				&& next_insn[3:0] != CMD_NOOP
+				&& next_insn[7:4] != CMD_HALT)
+			half_valid <= 1'b1;
+	end else if (half_ready)
 		half_valid <= 1'b0;
+`ifdef	FORMAL
+	always @(posedge i_clk)
+	if (!i_reset && $past(!i_reset && !i2c_abort && next_valid && !imm_cycle))
+	begin
+		if (half_insn[3:0] == CMD_NOOP)
+			assert(!half_valid);
+	end
+`endif
 	// }}}
 
 	// imm_cycle
 	// {{{
+	initial	imm_cycle = 1'b0;
 	always @(posedge i_clk)
 	if (i_reset || cpu_new_pc || cpu_clear_cache || i2c_abort)
 		imm_cycle <= 1'b0;
 	else if (!imm_cycle && (
-		(pf_valid && pf_ready && pf_insn[7:4]== CMD_SEND)
-		||(bus_override && ovw_ready && bus_write_data[7:4]== CMD_SEND)
+		(next_valid && next_insn[7:4]== CMD_SEND)
 		||(half_valid && half_ready && half_insn[3:0] == CMD_SEND)))
 		imm_cycle <= 1'b1;
-	else if (bus_write && bus_write_addr == ADR_ADDRESS)
-		imm_cycle <= 1'b0;
-	else if ((pf_valid && pf_ready) || (bus_override && ovw_ready))
-		imm_cycle <= 1'b0;
+	else begin
+		if (bus_jump)
+			imm_cycle <= 1'b0;
+		if ((pf_valid && pf_ready) || (bus_override && ovw_ready))
+			imm_cycle <= 1'b0;
+	end
+`ifdef	FORMAL
+	always @(*)
+	if (!i_reset && imm_cycle)
+		assert(insn[11:8] == CMD_SEND);
+`endif
 	// }}}
 
 	// cpu_new_pc, pf_jump_addr
@@ -380,24 +500,20 @@ module	wbi2ccpu #(
 
 		// CPU commanded jump
 		// {{{
-		if (bus_write && bus_write_addr == ADR_ADDRESS)
+		if (bus_jump)
 		begin
 			cpu_new_pc   <= 1'b1;
-			pf_jump_addr <= bus_write_data[AW-1:0];
+			pf_jump_addr <= bus_write_data[BAW-1:0];
 		end
 		// }}}
 	end
-	// }}}	
+	// }}}
 
 	assign	pf_ready = !w_stopped && !half_valid
-			&& (!insn_valid || ((insn[11] || insn_ready)&&!r_wait)
-				) && !cpu_new_pc;
-	assign	half_ready = !r_wait
-		&& (!insn_valid || ((insn[11] || insn_ready) && !r_wait));
+			&& (!insn_valid || s_tready) && !cpu_new_pc;
+	assign	half_ready = s_tready;
 
-	assign	ovw_ready = !half_valid
-			&& (!insn_valid || ((insn[11] || insn_ready)&&!r_wait)
-				);
+	assign	ovw_ready = !half_valid && (!insn_valid || s_tready);
 
 	// insn_valid
 	// {{{
@@ -405,40 +521,51 @@ module	wbi2ccpu #(
 	always @(posedge i_clk)
 	if (i_reset || i2c_abort)
 		insn_valid <= 1'b0;
-	else if (insn_valid && insn_ready && insn[11:8] == CMD_HALT)
+	else if (OPT_MANUAL && (r_manual || bus_manual))
 		insn_valid <= 1'b0;
-	else if (pf_valid && pf_ready)
+	else if (next_valid)
+		insn_valid <= imm_cycle || next_insn[7:4] != CMD_SEND;
+	else if ((!half_valid || half_insn == CMD_SEND) && s_tready)
+		insn_valid <= 1'b0;
+
+`ifdef	FORMAL
+	always @(posedge i_clk)
+	if (!i_reset && half_valid)
 	begin
-		insn_valid <= imm_cycle || (pf_insn[7:4] != CMD_SEND
-					&& pf_insn[7:4] != CMD_NOOP);
-	end else if (bus_override && ovw_ready)
-		insn_valid <= imm_cycle || (bus_write_data[7:4] != CMD_SEND
-					&& bus_write_data[7:4] != CMD_NOOP);
-	else if ((!half_valid || half_insn == CMD_SEND) && insn_ready)
-		insn_valid <= 1'b0;
+		assert(insn_valid);
+		assert(insn[11:8] != CMD_HALT && insn[11:8] != CMD_SEND);
+		assert(!imm_cycle);
+	end
+`endif
 	// }}}
 
 	// insn
 	// {{{
 	always @(posedge i_clk)
-	if (pf_valid && pf_ready)
+	if (i_reset)
 	begin
+		// {{{
+		half_insn <= CMD_NOOP;
+		insn <= 0;
+		// }}}
+	end else if (next_valid)
+	begin
+		// {{{
 		if (imm_cycle)
 		begin
-			insn[7:0] <= pf_insn;
+			insn[7:0] <= next_insn;
 			half_insn <= CMD_NOOP;
 		end else
-			{ insn[11:8], half_insn } <= pf_insn;
-	end else if (bus_override && ovw_ready)
-	begin
-		if (imm_cycle)
-		begin
-			insn[7:0] <= bus_write_data[7:0];
-			half_insn <= CMD_NOOP;
-		end else
-			{ insn[11:8], half_insn } <= bus_write_data[7:0];
-	end else if (!imm_cycle && insn_ready)
+			{ insn[11:8], half_insn } <= next_insn;
+		// }}}
+	end else if (!imm_cycle && s_tready)
 		{ insn[11:8], half_insn } <= { half_insn, CMD_NOOP };
+
+`ifdef	FORMAL
+	always @(*)
+	if (!i_reset && imm_cycle)
+		assert(!half_valid);
+`endif
 	// }}}
 
 	// ckcount
@@ -499,8 +626,8 @@ module	wbi2ccpu #(
 	always @(posedge i_clk)
 	if (i_reset)
 		abort_address <= RESET_ADDRESS;
-	else if (bus_write && bus_write_addr == ADR_ADDRESS)
-		abort_address <= bus_write_data[AW-1:0];
+	else if (bus_jump)
+		abort_address <= bus_write_data[BAW-1:0];
 	else if (pf_valid && pf_ready && !imm_cycle && pf_insn[7:4]== CMD_ABORT)
 			// || pf_insn == { CMD_START, CMD_SEND })
 		abort_address <= pf_insn_addr + 1;
@@ -511,8 +638,8 @@ module	wbi2ccpu #(
 	always @(posedge i_clk)
 	if (i_reset)
 		jump_target <= RESET_ADDRESS;
-	else if (bus_write && bus_write_addr == ADR_ADDRESS)
-		jump_target <= bus_write_data[AW-1:0];
+	else if (bus_jump)
+		jump_target <= bus_write_data[BAW-1:0];
 	else if (pf_valid && pf_ready && !imm_cycle
 			&& pf_insn[7:4] == CMD_TARGET)
 		jump_target <= pf_insn_addr + 1;
@@ -523,12 +650,12 @@ module	wbi2ccpu #(
 	always @(posedge i_clk)
 	if (i_reset)
 		r_wait <= 1'b0;
-	else if (!r_halted && i_sync_signal)
+	else if (r_halted || i_sync_signal)
 		r_wait <= 1'b0;
 	else begin
-		if (insn_valid && insn_ready && insn[7:4] == CMD_WAIT)
+		if (insn_valid && insn[11:8] == CMD_WAIT)
 			r_wait <= 1'b1;
-		if (bus_write && bus_write_addr == ADR_ADDRESS)
+		if (bus_jump)
 			r_wait <= 1'b0;
 	end
 	// }}}
@@ -550,12 +677,12 @@ module	wbi2ccpu #(
 	if (i_reset)
 		r_halted <= OPT_START_HALTED;
 	else begin
-		if (insn_valid && insn_ready && insn[11:8] == CMD_STOP
+		if (insn_valid && s_tready && insn[11:8] == CMD_STOP
 				&& soft_halt_request)
 			r_halted <= 1'b1;
 		if (pf_valid && pf_ready && pf_illegal)
 			r_halted <= 1'b1;
-		if (insn_valid && insn_ready && insn[11:8] == CMD_HALT)
+		if (insn_valid && s_tready && insn[11:8] == CMD_HALT)
 			r_halted <= 1'b1;
 
 		if (bus_write)
@@ -564,8 +691,31 @@ module	wbi2ccpu #(
 					&& bus_write_data[HALT_BIT]
 					&& bus_write_strb[HALT_BIT/8])
 				r_halted <= 1'b1;
-			if (bus_write_addr == ADR_ADDRESS && r_halted)
+			if (bus_manual)
+				r_halted <= 1'b1;
+			if (bus_jump && r_halted)
 				r_halted <= 1'b0;
+		end
+	end
+	// }}}
+
+	// r_aborted
+	// {{{
+	always @(posedge i_clk)
+	if (i_reset)
+		r_aborted <= 1'b0;
+	else begin
+		if (i2c_abort && r_halted)
+			r_aborted <= 1'b1;
+
+		if (bus_write)
+		begin
+			if (bus_write_addr == ADR_CONTROL
+					&& bus_write_data[ABORT_BIT]
+					&& bus_write_strb[ABORT_BIT/8])
+				r_aborted <= 1'b0;
+			if (bus_jump && r_halted)
+				r_aborted <= 1'b0;
 		end
 	end
 	// }}}
@@ -584,6 +734,8 @@ module	wbi2ccpu #(
 			if (bus_write_addr == ADR_CONTROL && bus_write_data[ERR_BIT]
 						&& bus_write_strb[ERR_BIT/8])
 				r_err <= 1'b0;
+			if (bus_jump && r_halted)
+				r_err <= 1'b0;
 		end
 	end
 	// }}}
@@ -595,10 +747,64 @@ module	wbi2ccpu #(
 		ovw_data <= 10'h00;
 	else if (!r_halted)
 		ovw_data[OVW_VALID] <= 1'b0;
-	else if (M_AXIS_TVALID)
-		ovw_data <= { 1'b1, M_AXIS_TLAST, M_AXIS_TDATA };
-	else if (bus_write && bus_write_addr == ADR_OVERRIDE)
-		ovw_data[OVW_VALID] <= 1'b0;
+	else begin
+		if (M_AXIS_TVALID)
+			ovw_data <= { 1'b1, M_AXIS_TLAST, M_AXIS_TDATA };
+		if (bus_jump)
+			ovw_data[OVW_VALID] <= 1'b0;
+	end
+`ifdef	FORMAL
+	always @(*)
+	if (!i_reset && !r_halted)
+		assert(ovw_data[OVW_VALID] == 1'b0);
+`endif
+	// }}}
+
+	// r_manual override, and r_scl, r_sda, manual override values
+	// {{{
+	generate if (OPT_MANUAL)
+	begin : GEN_MANUAL
+		// {{{
+		reg	manual, scl, sda, o_scl, o_sda;
+
+		initial	{ manual, scl, sda } = 3'b011;
+		always @(posedge i_clk)
+		if (i_reset)
+		begin
+			{ manual, scl, sda } <= 3'b011;
+		end else if (bus_write && bus_write_addr == ADR_OVERRIDE
+				&& bus_write_strb[MANUAL_BIT/8])
+		begin
+			manual <= bus_write_data[MANUAL_BIT];
+			if (!bus_write_data[MANUAL_BIT])
+				{ scl, sda } <= 2'b11;
+			else
+				{ scl, sda } <= bus_write_data[15:14];
+		end else if (bus_jump)
+			{ manual, scl, sda } <= 3'b011;
+
+		// o_i2c_[sda|scl], muxed based upon r_manual
+		// {{{
+		initial	{ o_scl, o_sda } = 2'b11;
+		always @(posedge i_clk)
+		if (i_reset)
+			{ o_scl, o_sda } <= 2'b11;
+		else if (r_manual)
+			{ o_scl, o_sda } <= { r_scl, r_sda };
+		else
+			{ o_scl, o_sda } <= { w_scl, w_sda };
+
+		assign { o_i2c_scl, o_i2c_sda } = { o_scl, o_sda };
+		// }}}
+
+		assign	{ r_manual, r_scl, r_sda } = { manual, scl, sda };
+		// }}}
+	end else begin : NO_MANUAL
+		// {{{
+		assign	{ o_i2c_scl, o_i2c_sda } = { w_scl, w_sda };
+		assign	{ r_manual, r_scl, r_sda } = { 1'b0, w_scl, w_sda };
+		// }}}
+	end endgenerate
 	// }}}
 
 	assign	w_stopped = r_wait || r_halted;
@@ -611,17 +817,18 @@ module	wbi2ccpu #(
 	//
 	//
 
-	assign	s_tvalid = insn_valid && !insn[11] && !r_wait;
+	assign	s_tvalid =  insn_valid && !insn[11]  && !r_wait;
+	assign	s_tready =((insn_ready ||  insn[11]) && !r_wait) || r_manual;
 
 `ifndef	FORMAL
 	axisi2c #(
 		// {{{
-		.OPT_WATCHDOG(0),
+		.OPT_WATCHDOG(OPT_WATCHDOG),
 		.OPT_LOWPOWER(OPT_LOWPOWER)
 		// }}}
 	) u_axisi2c (
 		// {{{
-		.S_AXI_ACLK(i_clk), .S_AXI_ARESETN(!i_reset),
+		.S_AXI_ACLK(i_clk), .S_AXI_ARESETN(!i_reset && !r_manual),
 		//
 		// Incoming instruction stream
 		// {{{
@@ -641,12 +848,16 @@ module	wbi2ccpu #(
 		.o_abort(i2c_abort),
 		// }}}
 		.i_scl(i_i2c_scl), .i_sda(i_i2c_sda),
-		.o_scl(o_i2c_scl), .o_sda(o_i2c_sda)
+		.o_scl(w_scl), .o_sda(w_sda)
 		// }}}
 	);
 `endif
-
 	// }}}
+
+	assign	o_debug = { !r_halted || insn_valid, ovw_data[OVW_VALID],
+			i2c_abort, i2c_stretch, half_insn,
+			r_wait, soft_halt_request,
+			w_control[21:0] };
 
 	// Keep Verilator happy
 	// {{{
@@ -767,9 +978,11 @@ module	wbi2ccpu #(
 	if (!f_past_valid)
 	begin
 		assert(!insn_valid);
-	end else if ($past(i_reset || i2c_abort))
+	end else if ($past(i_reset || i2c_abort || (OPT_MANUAL && r_manual)
+			||bus_manual))
 	begin
 		assert(!insn_valid);
+		assert(!half_valid);
 	end else if ($past(s_tvalid && !insn_ready))
 	begin
 		assert(s_tvalid);

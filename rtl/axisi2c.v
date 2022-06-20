@@ -30,7 +30,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2021, Gisselquist Technology, LLC
+// Copyright (C) 2021-2022, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -76,11 +76,11 @@ module axisi2c #(
 		output	reg	[8-1:0]	M_AXIS_TDATA,
 		output	reg		M_AXIS_TLAST,
 		// }}}
-		// 
+		//
 		input	wire	i_ckedge,
 		output	wire	o_stretch,
 		input	wire	i_scl, i_sda,
-		output	reg	o_scl, o_sda,
+		output	reg	o_scl, o_sda,	// 1 = tristate, 0 = ground
 
 		output	reg	o_abort
 		// }}}
@@ -124,8 +124,8 @@ module axisi2c #(
 	reg	[2:0]	nbits;
 	reg	[7:0]	sreg;
 
-	reg	q_scl, q_sda, ck_scl, ck_sda, lst_scl, lst_sda;
-	reg	start_bit, stop_bit, channel_busy;
+	reg		q_scl, q_sda, ck_scl, ck_sda, lst_scl, lst_sda;
+	reg		stop_bit, channel_busy;
 	wire		watchdog_timeout;
 	// }}}
 	////////////////////////////////////////////////////////////////////////
@@ -174,17 +174,14 @@ module axisi2c #(
 	//
 	//
 
-	initial	start_bit = 1'b0;
 	initial	stop_bit  = 1'b0;
 	initial	channel_busy = 1'b0;
 	always @(posedge S_AXI_ACLK)
 	if (!S_AXI_ARESETN)
 	begin
-		start_bit    <= 1'b0;
 		stop_bit     <= 1'b0;
 		channel_busy <= 1'b0;
 	end else begin
-		start_bit <= (ck_scl)&&(lst_scl)&&(!ck_sda)&&( lst_sda);
 		stop_bit  <= (ck_scl)&&(lst_scl)&&( ck_sda)&&(!lst_sda);
 
 		if (!ck_scl || !ck_sda)
@@ -219,11 +216,6 @@ module axisi2c #(
 		// }}}
 	end else begin : NO_WATCHDOG
 		assign	watchdog_timeout = 1'b0;
-
-		// Verilator lint_off UNUSED
-		wire	unused_watchdog;
-		assign	unused_watchdog = &{ 1'b0, start_bit };
-		// Verilator lint_on  UNUSED
 	end endgenerate
 	// }}}
 	////////////////////////////////////////////////////////////////////////
@@ -421,14 +413,15 @@ module axisi2c #(
 				endcase
 			end end
 			// }}}
-		STOP: if (ck_scl) begin
+		STOP: begin
 			// {{{
+			o_scl <= 1'b1;
+			if (ck_scl) begin
 				// o_scl == 1 on entry
 				// o_sda == 0
 				state <= IDLE_STOPPED;
-				o_scl <= 1'b1;
 				o_sda <= 1'b1;
-			end
+			end end
 			// }}}
 		REPEAT_START: if (!o_stretch) begin
 			// {{{
@@ -498,7 +491,7 @@ module axisi2c #(
 
 			// Clock stretch
 			if (!ck_scl) case(dir)
-			D_RD: if (ck_sda == o_sda && o_sda != will_ack)
+			D_RD: if (o_sda != will_ack)
 				state <= CKACKLO;
 			D_WR: state <= CKACKLO;
 			endcase
@@ -517,6 +510,7 @@ module axisi2c #(
 			// }}}
 		CKACKHI: begin
 			// {{{
+			o_scl <= 1'b1;
 			if (ck_scl) // Check for clock stretching
 			begin
 				o_scl <= 1'b0;
@@ -628,8 +622,7 @@ module axisi2c #(
 	always @(posedge S_AXI_ACLK)
 	if (!S_AXI_ARESETN)
 		M_AXIS_TVALID <= 1'b0;
-	else if (i_ckedge && !o_stretch && state == CKACKHI && dir == D_RD
-			&& !ck_sda)
+	else if (i_ckedge && !o_stretch && state == CKACKHI && dir == D_RD)
 		M_AXIS_TVALID <= 1'b1;
 	else if (M_AXIS_TREADY)
 		M_AXIS_TVALID <= 1'b0;
@@ -655,7 +648,7 @@ module axisi2c #(
 		end
 	end
 	// }}}
-		
+
 	// }}}
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -893,9 +886,14 @@ module axisi2c #(
 			&& ($past(ck_sda == o_sda)))
 		begin
 			// HALT
-			assert($stable(state) || state == ABORT);
 			assert($stable(o_scl));
-			assert($stable(o_sda));
+			if ($past(watchdog_timeout && state == ABORT && o_sda && i_ckedge))
+			begin
+				assert(state == STOP && !o_sda);
+			end else begin
+				assert($stable(state) || state == ABORT);
+				assert($stable(o_sda));
+			end
 		end
 	end
 

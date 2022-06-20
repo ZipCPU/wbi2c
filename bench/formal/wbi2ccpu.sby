@@ -1,5 +1,6 @@
 [tasks]
 prf
+prfm prf opt_manual
 cvr
 
 [options]
@@ -19,6 +20,7 @@ read -formal ffetch.v
 read -formal wbi2ccpu.v
 --pycode-begin--
 cmd = "hierarchy -top wbi2ccpu"
+cmd += " -chparam OPT_MANUAL %d" % (1 if "opt_manual" in tags else 0)
 output(cmd)
 --pycode-end--
 prep -top wbi2ccpu

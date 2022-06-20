@@ -72,6 +72,7 @@ bool	m_debug = false;
 void	addinsn(int);
 void	addimm(int);
 void	adddir(int);
+void	label(const char *);
 %}
 
 %option yylineno
@@ -94,6 +95,7 @@ void	adddir(int);
 (?i:TGT)	{ addinsn(I_TARGET); }
 (?i:TARGET)	{ addinsn(I_TARGET); }
 (?i:JUMP)	{ addinsn(I_JUMP); }
+[A-Za-z_][A-Za-z_0-9]*:	{ label(yytext); }
 ,\s*(?i:WR)	{ adddir(D_WR); }
 ,\s*(?i:RD)	{ adddir(D_RD); }
 ,\s*(?i:W)	{ adddir(D_WR); }
@@ -104,6 +106,7 @@ void	adddir(int);
 0		  { addimm(0); }
 [ \t]+		{ }
 ";".*\n		{ }
+"#".*\n	{ }
 "//".*\n	{ }
 \n { }
 %%
@@ -119,7 +122,7 @@ const char	*INSN[] = {
 int	m_binsz, m_pos;
 char	*m_binary = NULL;
 int	m_last_insn = I_NOOP;
-bool	m_half = false;
+bool	m_half = false, m_halted = false;
 
 void	init_buffer(void) {
 	// {{{
@@ -160,6 +163,8 @@ void	addinsn(int i) {
 		b = (b & 0xf0) | i;
 		m_binary[m_pos-1] = b;
 		m_half = false;
+
+		m_halted = (i== I_HALT);
 	} else {
 		b = (i<<4) | I_NOOP;
 		m_binary[m_pos] = b;
@@ -169,6 +174,8 @@ void	addinsn(int i) {
 		} else
 			m_half = true;
 		m_pos ++;
+
+		m_halted = (i== I_HALT);
 	}
 
 	m_last_insn = i;
@@ -184,6 +191,8 @@ void	addimm(int imm) {
 		if (verbose_flag)
 			fprintf(stderr, "ADD-IMM: 0x%02x\n", imm & 0x0ff);
 		m_binary[m_pos++] = imm;
+		m_half = false;
+		m_halted = false;
 	}
 
 	if (m_pos >= m_binsz)
@@ -300,6 +309,34 @@ void	dump(FILE *fp) {
 
 		prior_start = (h == I_START);
 	}
+}
+// }}}
+
+typedef struct SYMBOL_S {
+	unsigned	addr;
+	char		*str;
+} SYMBOL;
+
+#define	MAX_SYMBOLS	512
+SYMBOL	symlist[MAX_SYMBOLS];
+unsigned	nsyms = 0;
+
+void	label(const char *str) {
+	// {{{
+	if (m_pos > 0 && !m_halted) {
+		addinsn(I_HALT);
+	} m_half = false;
+
+	symlist[nsyms].addr = m_pos;
+	symlist[nsyms].str  = strdup(str);
+
+	unsigned slen = strlen(symlist[nsyms].str);
+	if (symlist[nsyms].str[slen-1] == ':')
+		// This should always be true
+		symlist[nsyms].str[slen-1] = '\0';
+	nsyms++;
+
+	assert(nsyms < MAX_SYMBOLS);
 }
 // }}}
 
@@ -457,14 +494,25 @@ int main(int argc, char **argv) {
 	// Write the file out
 	// {{{
 	if (!dump_flag) {
-
 		if (cpp_flag) {
-			fprintf(fout, "i2casm = {\n\t");
+			unsigned	sympos = 0, tabstart = 0;
+
+			if (symlist[0].addr == 0)
+				fprintf(fout, "const char %s[] = {\n\t", symlist[sympos++].str);
+			else
+				fprintf(fout, "const char i2casm[] = {\n\t");
 			for(int p=0; p<m_pos; p++) {
+				if (sympos < nsyms && symlist[sympos].addr == p) {
+					fprintf(fout, "};\n\nconst char %s[] = {\n\t", symlist[sympos++].str);
+					tabstart = p;
+				}
+
 				fprintf(fout, "0x%02x", m_binary[p] & 0x0ff);
-				if (p==m_pos-1)
+				if ((p==m_pos-1)
+					||(sympos < nsyms
+						&& symlist[sympos].addr==p+1))
 					fprintf(fout, "\n");
-				else if ((p & 7) != 7)
+				else if (((p-tabstart) & 7) != 7)
 					fprintf(fout, ", ");
 				else
 					fprintf(fout, ",\n\t");
