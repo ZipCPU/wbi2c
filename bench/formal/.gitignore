@@ -1,3 +1,8 @@
 axisi2c_*/
 wbi2ccpu_*/
 axili2ccpu_*/
+fwb_slave.v
+faxil_slave.v
+ffetch.v
+skidbuffer.v
+axilfetch.v

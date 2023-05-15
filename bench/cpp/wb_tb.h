@@ -1,18 +1,19 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
 // Filename:	wb_tb.cpp
-//
+// {{{
 // Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
 //
-// Purpose:	
+// Purpose:	A Wishbone (pipeline) bus functional model for use with
+//		Verilator.
 //
 // Creator:	Dan Gisselquist, Ph.D.
 //		Gisselquist Technology, LLC
 //
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (C) 2015-2017, Gisselquist Technology, LLC
-//
+// }}}
+// Copyright (C) 2015-2023, Gisselquist Technology, LLC
+// {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or (at
@@ -27,14 +28,14 @@
 // with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
 // target there if the PDF file isn't present.)  If not, see
 // <http://www.gnu.org/licenses/> for a copy.
-//
+// }}}
 // License:	GPL, v3, as defined and found on www.gnu.org,
+// {{{
 //		http://www.gnu.org/licenses/gpl.html
-//
 //
 ////////////////////////////////////////////////////////////////////////////////
 //
-//
+// }}}
 #include <stdio.h>
 
 #include <verilated.h>
@@ -49,10 +50,12 @@ public:
 	bool	m_bomb;
 
 	WB_TB(void) {
+		// {{{
 		m_bomb = false;
 		TESTB<VA>::m_core->i_wb_cyc = 0;
 		TESTB<VA>::m_core->i_wb_stb = 0;
 	}
+	// }}}
 
 #define	TICK	this->tick
 	/*
@@ -63,6 +66,7 @@ public:
 	*/
 
 	unsigned wb_read(unsigned a) {
+		// {{{
 		int		errcount = 0;
 		unsigned	result;
 
@@ -106,8 +110,10 @@ public:
 
 		return result;
 	}
+	// }}}
 
 	void	wb_read(unsigned a, int len, unsigned *buf, const int inc=1) {
+		// {{{
 		int		errcount = 0;
 		int		THISBOMBCOUNT = BOMBCOUNT * len;
 		int		cnt, rdidx;
@@ -165,8 +171,10 @@ public:
 		TICK();
 		assert(!TESTB<VA>::m_core->o_wb_ack);
 	}
+	// }}}
 
 	void	wb_write(unsigned a, unsigned v) {
+		// {{{
 		int errcount = 0;
 
 		printf("WB-WRITEM(%08x) <= %08x\n", a, v);
@@ -201,8 +209,10 @@ public:
 		assert(!TESTB<VA>::m_core->o_wb_ack);
 		assert(!TESTB<VA>::m_core->o_wb_stall);
 	}
+	// }}}
 
 	void	wb_write(unsigned a, unsigned int ln, unsigned *buf, const int inc=1) {
+		// {{{
 		unsigned errcount = 0, nacks = 0;
 
 		printf("WB-WRITEM(%08x, %d, ...)\n", a, ln);
@@ -253,6 +263,7 @@ public:
 		assert(!TESTB<VA>::m_core->o_wb_ack);
 		assert(!TESTB<VA>::m_core->o_wb_stall);
 	}
+	// }}}
 
 	bool	bombed(void) const { return m_bomb; }
 

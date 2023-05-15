@@ -11,7 +11,7 @@
 **
 ********************************************************************************
 ** }}}
-** Copyright (C) 2021, Gisselquist Technology, LLC
+** Copyright (C) 2021-2023, Gisselquist Technology, LLC
 ** {{{
 ** This program is free software (firmware): you can redistribute it and/or
 ** modify it under the terms of  the GNU General Public License as published
@@ -42,6 +42,24 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <ctype.h>
+
+typedef struct SYMBOL_S {
+	unsigned	addr;
+	char		*str;
+} SYMBOL;
+
+typedef struct EQDEFN_S {
+	unsigned	val;
+	char		*str;
+} EQDEFN;
+
+#define	MAX_SYMBOLS	512
+SYMBOL	symlist[MAX_SYMBOLS];
+unsigned	nsyms = 0;
+
+EQDEFN	defnlist[MAX_SYMBOLS];
+unsigned	ndefns = 0;
 
 extern "C" int yylex();
 extern "C" int	yywrap() { return 1;}
@@ -49,17 +67,17 @@ extern "C" int	yywrap() { return 1;}
 #define	I_NOOP		0
 #define	I_START		1
 #define	I_STOP		2
-#define	I_RXK		3
-#define	I_RXN		4
-#define	I_RXLK		5
-#define	I_RXLN		6
-#define	I_SEND		7
+#define	I_SEND		3
+#define	I_RXK		4
+#define	I_RXN		5
+#define	I_RXLK		6
+#define	I_RXLN		7
 #define	I_WAIT		8
 #define	I_HALT		9
 #define	I_ABORT		10
 #define	I_TARGET	11
 #define	I_JUMP		12
-#define	I_ILLD		13
+#define	I_CHANNEL	13
 #define	I_ILLE		14
 #define	I_ILLF		15
 
@@ -70,7 +88,9 @@ int	posn = 0;
 bool	m_debug = false;
 
 void	addinsn(int);
+void	addimm_lbl(const char *str);
 void	addimm(int);
+void	adddefn(const char *str);
 void	adddir(int);
 void	label(const char *);
 %}
@@ -95,7 +115,12 @@ void	label(const char *);
 (?i:TGT)	{ addinsn(I_TARGET); }
 (?i:TARGET)	{ addinsn(I_TARGET); }
 (?i:JUMP)	{ addinsn(I_JUMP); }
+(?i:CHANNEL)	{ addinsn(I_CHANNEL); }
+(?i:CHNL)	{ addinsn(I_CHANNEL); }
+(?i:CHAN)	{ addinsn(I_CHANNEL); }
+[A-Za-z_][A-Za-z_0-9]*[ \t]*=[ \t]*0[xX][0-9A-Fa-f] { adddefn(yytext);}
 [A-Za-z_][A-Za-z_0-9]*:	{ label(yytext); }
+[A-Za-z_][A-Za-z_0-9]*  { addimm_lbl(yytext); }
 ,\s*(?i:WR)	{ adddir(D_WR); }
 ,\s*(?i:RD)	{ adddir(D_RD); }
 ,\s*(?i:W)	{ adddir(D_WR); }
@@ -117,7 +142,7 @@ FILE	*hfile = NULL;		// C++ data file
 
 const char	*INSN[] = {
 		"NOOP","START","STOP", "RXK",   "RXN", "RXLK", "RXLN", "SEND",
-		"WAIT","HALT", "ABORT","TARGET","JUMP","ILL",  "ILL",  "ILL"};
+		"WAIT","HALT", "ABORT","TARGET","JUMP","CHAN",  "ILL",  "ILL"};
 
 int	m_binsz, m_pos;
 char	*m_binary = NULL;
@@ -169,7 +194,8 @@ void	addinsn(int i) {
 		b = (i<<4) | I_NOOP;
 		m_binary[m_pos] = b;
 
-		if (i == I_SEND || i == I_TARGET || i == I_ABORT)  {
+		if (i == I_SEND || i == I_TARGET || i == I_ABORT
+				|| i == I_CHANNEL)  {
 			m_half = false;
 		} else
 			m_half = true;
@@ -185,9 +211,22 @@ void	addinsn(int i) {
 }
 // }}}
 
+void	addimm_lbl(const char *id) {
+	// {{{
+	unsigned	jk;
+
+	for(jk=0; jk<ndefns; jk++) {
+		if (strcmp(id, defnlist[jk].str) == 0) {
+			addimm(defnlist[jk].val);
+			return;
+		}
+	}
+}
+// }}}
+
 void	addimm(int imm) {
 	// {{{
-	if (m_last_insn == I_SEND) {
+	if (m_last_insn == I_SEND || m_last_insn == I_CHANNEL) {
 		if (verbose_flag)
 			fprintf(stderr, "ADD-IMM: 0x%02x\n", imm & 0x0ff);
 		m_binary[m_pos++] = imm;
@@ -229,6 +268,9 @@ void	dump(FILE *fp) {
 		if ((h == I_SEND || (m_binary[p]&0x0f) == I_SEND))
 			fprintf(fp, "%02x %02x ", m_binary[p] & 0x0ff,
 					m_binary[p+1] & 0x0ff);
+		else if ((h == I_CHANNEL || (m_binary[p]&0x0f) == I_CHANNEL))
+			fprintf(fp, "%02x %02x ", m_binary[p] & 0x0ff,
+					m_binary[p+1] & 0x0ff);
 		else
 			fprintf(fp, "%02x%3s ", m_binary[p] & 0x0ff, "");
 
@@ -238,10 +280,6 @@ void	dump(FILE *fp) {
 		case I_NOOP:	fprintf(fp, "  NOOP\n"); break;
 		case I_START:	fprintf(fp, "  START\n"); break;
 		case I_STOP:	fprintf(fp, "  STOP\n"); break;
-		case I_RXK:	fprintf(fp, "  RXK\n"); break;
-		case I_RXN:	fprintf(fp, "  RXN\n"); break;
-		case I_RXLK:	fprintf(fp, "  RXLK\n"); break;
-		case I_RXLN:	fprintf(fp, "  RXLN\n"); break;
 		case I_SEND: if (prior_start) {
 				unsigned	arg = m_binary[++p] & 0x0ff;
 				int	d = arg & 1;
@@ -256,18 +294,24 @@ void	dump(FILE *fp) {
 				fprintf(fp, "  SEND\t0x%02x\n",
 					m_binary[++p] & 0x0ff);
 			} break;
+		case I_RXK:	fprintf(fp, "  RXK\n"); break;
+		case I_RXN:	fprintf(fp, "  RXN\n"); break;
+		case I_RXLK:	fprintf(fp, "  RXLK\n"); break;
+		case I_RXLN:	fprintf(fp, "  RXLN\n"); break;
 		//
 		case I_WAIT:	fprintf(fp, "  WAIT\n"); break;
 		case I_HALT:	fprintf(fp, "  HALT\n"); break;
 		case I_ABORT:	fprintf(fp, "  ABORT\n"); break;
 		case I_TARGET:	fprintf(fp, "  TARGET\n"); break;
 		case I_JUMP:	fprintf(fp, "  JUMP\n"); break;
+		case I_CHANNEL: fprintf(fp, "  CHANNEL\t0x%02x\n",
+					m_binary[++p] & 0x0ff); break;
 		default:	fprintf(fp, "  ILL\t(0x%x)\n", h); break;
 		}
 
 		prior_start = (h == I_START);
 
-		if (h == I_SEND)
+		if (h == I_SEND || h == I_CHANNEL)
 			continue;
 
 		h = m_binary[p] & 0x0f;
@@ -280,10 +324,6 @@ void	dump(FILE *fp) {
 		case I_NOOP:	fprintf(fp, "| NOOP\n"); break;
 		case I_START:	fprintf(fp, "| START\n"); break;
 		case I_STOP:	fprintf(fp, "| STOP\n"); break;
-		case I_RXK:	fprintf(fp, "| RXK\n"); break;
-		case I_RXN:	fprintf(fp, "| RXN\n"); break;
-		case I_RXLK:	fprintf(fp, "| RXLK\n"); break;
-		case I_RXLN:	fprintf(fp, "| RXLN\n"); break;
 		case I_SEND: if (prior_start) {
 				unsigned	arg = m_binary[++p] & 0x0ff;
 				int	d = arg & 1;
@@ -298,12 +338,19 @@ void	dump(FILE *fp) {
 				fprintf(fp, "| SEND\t0x%02x\n",
 					m_binary[++p] & 0x0ff);
 			} break;
+		case I_RXK:	fprintf(fp, "| RXK\n"); break;
+		case I_RXN:	fprintf(fp, "| RXN\n"); break;
+		case I_RXLK:	fprintf(fp, "| RXLK\n"); break;
+		case I_RXLN:	fprintf(fp, "| RXLN\n"); break;
 		//
 		case I_WAIT:	fprintf(fp, "| WAIT\n"); break;
 		case I_HALT:	fprintf(fp, "| HALT\n"); break;
 		case I_ABORT:	fprintf(fp, "| ABORT\n"); break;
 		case I_TARGET:	fprintf(fp, "| TARGET\n"); break;
 		case I_JUMP:	fprintf(fp, "| JUMP\n"); break;
+		case I_CHANNEL: fprintf(fp, "| CHANNEL\t0x%02x\n",
+					m_binary[++p] & 0x0ff);
+			break;
 		default:	fprintf(fp, "| ILL\t(0x%x)\n", h); break;
 		}
 
@@ -312,14 +359,36 @@ void	dump(FILE *fp) {
 }
 // }}}
 
-typedef struct SYMBOL_S {
-	unsigned	addr;
-	char		*str;
-} SYMBOL;
+void	adddefn(const char *str) {
+	// {{{
+	char		*cpy, *ptr, *ptreq;
+	unsigned	val;
 
-#define	MAX_SYMBOLS	512
-SYMBOL	symlist[MAX_SYMBOLS];
-unsigned	nsyms = 0;
+	cpy = strdup(str);
+	ptreq = ptr = strchr(cpy,'=');
+	if (ptr == NULL) {
+		free(cpy); return;
+	}
+
+	ptr++;
+	while(*ptr && isspace(*ptr))
+		ptr++;
+
+	val = strtoul(ptr, NULL, 0);
+
+	*ptreq = '\0';
+	ptreq--;
+	while(cpy < ptreq && isspace(*ptreq))
+		*ptreq-- = '\0';
+
+	defnlist[ndefns].val = val;
+	defnlist[ndefns].str = strdup(cpy);
+	ndefns++;
+	assert(ndefns < MAX_SYMBOLS);
+
+	free(cpy);
+}
+// }}}
 
 void	label(const char *str) {
 	// {{{
@@ -497,7 +566,7 @@ int main(int argc, char **argv) {
 		if (cpp_flag) {
 			unsigned	sympos = 0, tabstart = 0;
 
-			if (symlist[0].addr == 0)
+			if (nsyms > 0 && symlist[0].addr == 0)
 				fprintf(fout, "const char %s[] = {\n\t", symlist[sympos++].str);
 			else
 				fprintf(fout, "const char i2casm[] = {\n\t");

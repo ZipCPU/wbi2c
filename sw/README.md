@@ -13,6 +13,14 @@ Assembler commands are:
 
 - STOP: Issue an I2C Stop condition
 
+- SEND <byte>: Sends the given byte.  There are two additional yet special
+  forms of this command recognized by the assembler.  `SEND <byte>,WR` will
+  send the byte shifted left by one.  `SEND <byte>,RD` will send the byte
+  upshifted by one, and or'd with one.  These latter two forms are useful for
+  starting a communication, where the first byte needs to identify the ID of
+  the desired device (the `<byte>`), and RD or WR are the last bit in the
+  sequence used to tell the device if you'll be reading from or writing to it.
+
 - RXK: Receive a byte and forward it to the outgoing AXI stream once complete.
   ACK the result once it has been received.
 
@@ -23,14 +31,6 @@ Assembler commands are:
 
 - RXLN: Same as RXN or RXLK--raises TLAST when the byte is available, and does
   not ACK the result
-
-- SEND <byte>: Sends the given byte.  There are two special forms of this
-  command recognized by the assembler.  `SEND <byte>,WR` will send the byte
-  shifted left by one.  `SEND <byte>,RD` will send the byte upshifted by one,
-  and or'd with one.  These latter two forms are useful for starting a
-  communication, where the first byte needs to identify the ID of the desired
-  device (the `<byte>`), and RD or WR are the last bit in the sequence used
-  to tell the device if you'll be reading from or writing to it.
 
 Those are the commands actually sent to the underlying I2C controller.  Another
 5 commands exist as well, which will be handled by the instruction decoder:
@@ -53,8 +53,17 @@ Those are the commands actually sent to the underlying I2C controller.  Another
 - JUMP: This is the other half of the `TARGET` loop structure.  Once `JUMP`
   is received, the CPU will `JUMP` to the `TARGET` instruction.
 
+- CHANNEL: In shared I2C sytems, the channel command sets the `TID` field
+  of the outgoing AXI stream, so the stream values can be sent to different
+  targets if necessary.
+
 Note that all logic is address independent: any jump addresses, whether via
 `ABORT` or `JUMP`, are defined by the locations of these instructions.
+
+The assembler has some support for named immediate values.  A statement of
+the form "A=0xff", for example, will define a symbol "A" as having the value
+"0x0ff".  This value can later be used in either SEND or CHANNEL commands
+if desired.
 
 ## Testing
 

@@ -4,14 +4,19 @@
 ## {{{
 ## Project:	WBI2C ... a set of (Wishbone controlled) I2C controller(s)
 ##
-## Purpose:	
+## Purpose:	Since the I2C CPU/microcontroller approach requires a set of
+##		instructions, we need some software to generate those
+##	instructions.  That's the purpose of the I2C microcontroller assembler,
+##	or i2casm as it is called here.  The i2casm is found in this directory
+##	in the form of Flex script, i2casm.l that needs to be built into an
+##	executable.  This makefile coordinates the build of this executable.
 ##
 ## Creator:	Dan Gisselquist, Ph.D.
 ##		Gisselquist Technology, LLC
 ##
 ################################################################################
 ## }}}
-## Copyright (C) 2021, Gisselquist Technology, LLC
+## Copyright (C) 2021-2023, Gisselquist Technology, LLC
 ## {{{
 ## This program is free software (firmware): you can redistribute it and/or
 ## modify it under the terms of  the GNU General Public License as published

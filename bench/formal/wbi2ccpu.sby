@@ -21,11 +21,13 @@ read -formal wbi2ccpu.v
 --pycode-begin--
 cmd = "hierarchy -top wbi2ccpu"
 cmd += " -chparam OPT_MANUAL %d" % (1 if "opt_manual" in tags else 0)
+cmd += " -chparam AXIS_ID_WIDTH 4"
 output(cmd)
 --pycode-end--
-prep -top wbi2ccpu
+proc -norom
+prep
 
 [files]
 ../../rtl/wbi2ccpu.v
-../../../../../zipcpu/trunk/bench/formal/ffetch.v
-../../../../../zipcpu/trunk/rtl/ex/fwb_slave.v
+ffetch.v
+fwb_slave.v

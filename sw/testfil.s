@@ -17,6 +17,7 @@
 	WAIT
 	ABORT
 ; Read from sensor 5, address 22
+	CHANNEL 5
 	START
 	SEND	5,WR	; Device address, we will start out writing
 	SEND	22	; Pointer byte

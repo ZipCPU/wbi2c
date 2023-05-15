@@ -22,6 +22,7 @@ read -formal axisi2c.v
 read -formal axili2ccpu.v
 --pycode-begin--
 cmd = "hierarchy -top axili2ccpu"
+cmd += " -chparam AXIS_ID_WIDTH 4"
 output(cmd)
 --pycode-end--
 prep -top axili2ccpu
@@ -29,7 +30,7 @@ prep -top axili2ccpu
 [files]
 ../../rtl/axisi2c.v
 ../../rtl/axili2ccpu.v
-../../../../../zipcpu/trunk/bench/formal/ffetch.v
-../../../../wb2axip/trunk/rtl/skidbuffer.v
-../../../../wb2axip/trunk/rtl/axilfetch.v
-../../../../wb2axip/trunk/bench/formal/faxil_slave.v
+ffetch.v
+skidbuffer.v
+axilfetch.v
+faxil_slave.v

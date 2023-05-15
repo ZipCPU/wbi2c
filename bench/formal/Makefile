@@ -4,10 +4,7 @@
 ## {{{
 ## Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
 ##
-## Purpose:	This is the master Makefile for the project.  It coordinates
-##		the build of a Verilator test, "proving" that this core works
-##	(to the extent that any simulated test "proves" anything).  This
-##	make file depends upon the proper setup of Verilator.
+## Purpose:	Coordinates the proofs of all items that might be out of date.
 ##
 ## Creator:	Dan Gisselquist, Ph.D.
 ##		Gisselquist Technology, LLC
@@ -38,29 +35,33 @@
 ################################################################################
 ##
 ## }}}
-all: rtl bench test
-SUBMAKE := $(MAKE) --no-print-directory -C
+all:
+.PHONY: axili2ccpu wbi2ccpu axisi2c
+RTL := ../../rtl
+ZIP := ../../../../../zipcpu/trunk
+BUS := ../../../../wb2axip/trunk
+all: axili2ccpu wbi2ccpu axisi2c
 
-.PHONY: doc
-doc:
-	$(SUBMAKE) doc
+axili2ccpu: axili2ccpu_prf/PASS axili2ccpu_cvr/PASS
+axili2ccpu_prf/PASS: wbi2ccpu.sby $(RTL)/axili2ccpu.v $(RTL)/axisi2c.v $(ZIP)/bench/formal/ffetch.v $(BUS)/rtl/skidbuffer.v $(BUS)/rtl/axilfetch.v $(BUS)/bench/formal/faxil_slave.v
+	sbyx.pl axili2ccpu.sby prf
+axili2ccpu_cvr/PASS: wbi2ccpu.sby $(RTL)/axili2ccpu.v $(RTL)/axisi2c.v $(ZIP)/bench/formal/ffetch.v $(BUS)/rtl/skidbuffer.v $(BUS)/rtl/axilfetch.v $(BUS)/bench/formal/faxil_slave.v
+	sby -f axili2ccpu.sby cvr
 
-.PHONY: rtl
-rtl:
-	$(SUBMAKE) rtl
 
-.PHONY: bench
-bench: rtl
-	$(SUBMAKE) bench/cpp
+wbi2ccpu: wbi2ccpu_prf/PASS wbi2ccpu_cvr/PASS
+wbi2ccpu_prf/PASS: wbi2ccpu.sby $(RTL)/wbi2ccpu.v $(ZIP)/bench/formal/ffetch.v $(ZIP)/rtl/ex/fwb_slave.v
+	sbyx.pl wbi2ccpu.sby prf
+wbi2ccpu_cvr/PASS: wbi2ccpu.sby $(RTL)/wbi2ccpu.v $(ZIP)/bench/formal/ffetch.v $(ZIP)/rtl/ex/fwb_slave.v
+	sby -f wbi2ccpu.sby cvr
 
-.PHONY: test
-test: bench
-	$(SUBMAKE) bench/cpp test
-
-.PHONY: clean
-clean:
-	$(SUBMAKE) rtl		clean
-	$(SUBMAKE) bench/cpp	clean
-	$(SUBMAKE) doc		clean
-
+axisi2c: axisi2c_prf/PASS axisi2c_prflp/PASS axisi2c_prfw/PASS axisi2c_cvr/PASS
+axisi2c_prf/PASS: axisi2c.sby $(RTL)/axisi2c.v
+	sbyx.pl axisi2c.sby prf
+axisi2c_prflp/PASS: axisi2c.sby $(RTL)/axisi2c.v
+	sbyx.pl axisi2c.sby prflp
+axisi2c_prfw/PASS: axisi2c.sby $(RTL)/axisi2c.v
+	sbyx.pl axisi2c.sby prfw
+axisi2c_cvr/PASS: axisi2c.sby $(RTL)/axisi2c.v
+	sby -f axisi2c.sby cvr
 
