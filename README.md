@@ -6,8 +6,7 @@ This repository contains contains a couple of I2C cores.  There's a basic,
 Both work using a small piece of shared memory,
 which may be read or written to via the wishbone bus.  Changes made to the
 slave's memory can be read/written by the [I2C master](rtl/wbi2cmaster.v)
-when it chooses to
-make a transaction happen.  With respect to the [I2C master
+when it chooses to make a transaction happen.  With respect to the [I2C master
 controller](rtl/wbi2cmaster.v), changes made to the shared memory will
 require an explicit command in order to push those changes from the master to
 the slave, or for example to read them back from the slave.
@@ -15,13 +14,13 @@ the slave, or for example to read them back from the slave.
 Since writing those original basic controllers, I've now added an
 [I2C CPU](https://zipcpu.com/blog/2021/11/15/ultimate-i2c.html).  This is
 really more of a scripted FSM than a full purpose CPU, however it does fit
-in nicely with some of the telemetry projects I'm dealing with.  There are
+in nicely with many of the telemetry projects I'm dealing with.  There are
 now two versions of this
 [I2C CPU](https://zipcpu.com/blog/2021/11/15/ultimate-i2c.html) contained
 within this repository: a [Wishbone version](rtl/wbi2ccpu.v)
 and an [AXI-Lite version](rtl/axili2ccpu.v).  Other than the bus
 implementation (and possibly any bus induced endianness issues), the two should
-be compatible.
+be compatible at the software level.
 
 ## The Slave Core
 
@@ -45,17 +44,21 @@ particular master--although they can still be queried by the CPU following.
 
 ## The I2C CPU
 
-This core follows an externally provided script describing its interaction.
-This script can either be provided via a bus slave port, or it can be read from
-external memory, using either Wishbone or AXI-lite bus protocols.  The script
-contains commands that will then be fed to the I2C controller within.
+This module works by following an externally provided script describing its
+interaction.  This script can either be provided via a bus slave port, or it
+can be read from external memory, using either Wishbone or AXI-lite bus
+protocols.  The script contains commands that will then be fed to the I2C
+controller within.
 Specific commands include sending a START condition, STOP condition, particular
 bytes or data, or reading bytes of data.  Other commands, such as repeating
 a sequence or halting, are also available to control the instruction handler.
+The full command list can be found [here](doc/ultramicro-isa.png), and [its
+(most recent) documentation may be found
+here](https://zipcpu.com/blog/2021/11/15/ultimate-i2c.html).
 
-A [small assembler](sw/i2casm.l) exists in the SW/ directory which can either
-assemble a given script or disassemble such a script.  Run "make test" in the
-sw/ directory to build this assembler, assemble [a test
+A [small assembler](sw/i2casm.l) exists in the [SW/ directory](sw/) which can
+either assemble a given script or disassemble such a script.  Run "make test"
+in the [sw/ directory](sw/) to build this assembler, assemble [a test
 "program"](sw/testfil.s), and then to disassemble it back to its component
 instructions for verification purposes.
 
@@ -65,12 +68,35 @@ been read from the interface while following the script.
 # Status
 
 Both the [slave](rtl/wbi2cslave.v) and [master](rtl/wbi2cmaster.v) controllers
-have been tested as part of the EDID support to a video application.  Both files
-have had minor edits since this last success.  The
-[I2C CPU](https://zipcpu.com/blog/2021/11/15/ultimate-i2c.html) has only
-passed a minimal formal test.  It has not yet passed simulation or hardware
-verification, but will likely be verified in hardware as part of a telemetry
-package sometime in 2022.
+have been tested as part of the EDID support to (now) multiple video
+applications.
+
+The [I2C CPU](https://zipcpu.com/blog/2021/11/15/ultimate-i2c.html) has also
+proven itself valuable for both [temperature reading](https://github.com/ZipCPU/eth10g/blob/master/sw/i2c/temp.txt)
+[(and monitoring)](https://github.com/ZipCPU/eth10g/blob/master/rtl/wbfan.v),
+[EDID handling](https://github.com/ZipCPU/eth10g/blob/master/sw/i2c/edid.txt),
+[DDR3 configuration
+reading](https://github.com/ZipCPU/eth10g/blob/master/sw/i2c/ddr3.txt),
+[SFP+ configuration
+reading](https://github.com/ZipCPU/eth10g/blob/master/sw/i2c/sfp.txt),
+[Si5324 controlling](https://github.com/ZipCPU/eth10g/blob/master/sw/i2c/siclk.txt),
+and [I2C OLED control](https://www.amazon.com/Teyleten-Robot-Display-SSD1306-Raspberry/dp/B08ZY4YBHL).
+[Example software may be found here](https://github.com/ZipCPU/eth10g/blob/master/sw/zipcpu/board).
+The demonstration control scripts, linked above, also included commands for a
+TCA9548 I2C hub, used for deconflicting the I2C addresses of multiple
+(otherwise identical) I2C devices.
+
+An [external Wishbone
+DMA](https://github.com/ZipCPU/eth10g/blob/master/rtl/wbi2c/wbi2cdma.v) also
+exists, to put data read from this controller into memory.  That DMA has yet to
+be integrated into this repository.  An AXI-Lite version of this DMA is also
+planned, but not yet built.
+
+The biggest item missing from this repository at present is a good
+specification for these IP components.
+
+Bottom line: this IP has been such a success, that it is likely to be used in
+multiple projects going forward.
 
 # License
 
