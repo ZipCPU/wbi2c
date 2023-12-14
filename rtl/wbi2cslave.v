@@ -7,10 +7,13 @@
 // Purpose:	To create an I2C Slave that can be accessed via a wishbone bus.
 //
 //	This core works by creating a dual-port 128-byte memory, that can be
-//	written to via either the wishbone bus it is connected to, or the I2C
-//	bus which it acts as a slave upon.
-//	Via either bus, the 128 bytes of slave memory may be referenced, read,
-//	and written to.
+//	written to via either 1) the I2C bus which it acts as a slave upon,
+//	2) an AXI slave port, or 3) the wishbone bus it is connected to.  The
+//	128 bytes of slave memory may be referenced, read, and written to via
+//	either of the I2C or WB busses.
+//
+//	The AXI slave port was added as an after thought to allow forwarding
+//	of a read only I2C port (such as EDID info from a downstream monitor).
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
@@ -44,15 +47,17 @@ module	wbi2cslave #(
 		// Verilator lint_off UNUSED
 		parameter	INITIAL_MEM = "",
 		// Verilator lint_on  UNUSED
-		parameter [0:0]	WB_READ_ONLY = 1'b0,
+		parameter [0:0]	WB_READ_ONLY  = 1'b0,
 		parameter [0:0]	I2C_READ_ONLY = 1'b0,
+		parameter [0:0]	AXIS_SUPPORT  = 1'b1,
 		parameter [6:0]	SLAVE_ADDRESS = 7'h50,
-		parameter	MEM_ADDR_BITS = 8,
-		localparam [0:0] READ_ONLY = (WB_READ_ONLY)&&(I2C_READ_ONLY)
+		parameter	MEM_ADDR_BITS = 8
 		// }}}
 	) (
 		// {{{
 		input	wire		i_clk, i_reset,
+		// Bus access
+		// {{{
 		input	wire		i_wb_cyc, i_wb_stb, i_wb_we,
 		input	wire	[(MEM_ADDR_BITS-3):0]	i_wb_addr,
 		input	wire	[31:0]	i_wb_data,
@@ -60,15 +65,28 @@ module	wbi2cslave #(
 		output	wire		o_wb_stall,
 		output	reg		o_wb_ack,
 		output	reg	[31:0]	o_wb_data,
-		input	wire		i_i2c_sck, i_i2c_sda,
-		output	reg		o_i2c_sck, o_i2c_sda,
-		//
+		// }}}
+		// AXI Stream access, for data from I2C
+		// {{{
+		input	wire		s_valid,
+		output	wire		s_ready,
+		input	wire	[7:0]	s_data,
+		input	wire		s_last,
+		// }}}
+		// Actual I2C interaction
+		// {{{
+		input	wire		i_i2c_scl, i_i2c_sda,
+		output	reg		o_i2c_scl, o_i2c_sda,
+		// }}}
 		output	wire	[31:0]	o_dbg
 		// }}}
 	);
 
 	// Local declarations
 	// {{{
+	localparam [0:0] READ_ONLY = WB_READ_ONLY && I2C_READ_ONLY
+							&& !AXIS_SUPPORT;
+
 	localparam [2:0]	I2CIDLE	 = 3'h0,
 				I2CSTART = 3'h1,
 				I2CADDR	 = 3'h2,
@@ -92,16 +110,16 @@ module	wbi2cslave #(
 	reg	[(MEM_ADDR_BITS-3):0]	r_addr;
 
 	reg	[(2*PL-1):0]	i2c_pipe;
-	reg	last_sck, last_sda;
+	reg	last_scl, last_sda;
 	// Current values are at the edge of the synchronizer
-	wire	this_sck   = i2c_pipe[(2*PL-1)];
+	wire	this_scl   = i2c_pipe[(2*PL-1)];
 	wire	this_sda   = i2c_pipe[(2*PL-2)];
 
 	// This allows us to notice edges
-	wire	i2c_posedge= (!last_sck)&&( this_sck);
-	wire	i2c_negedge= ( last_sck)&&(!this_sck);
-	wire	i2c_start  = ( last_sck)&&( this_sck)&&( last_sda)&&(!this_sda);
-	wire	i2c_stop   = ( last_sck)&&( this_sck)&&(!last_sda)&&( this_sda);
+	wire	i2c_posedge= (!last_scl)&&( this_scl);
+	wire	i2c_negedge= ( last_scl)&&(!this_scl);
+	wire	i2c_start  = ( last_scl)&&( this_scl)&&( last_sda)&&(!this_sda);
+	wire	i2c_stop   = ( last_scl)&&( this_scl)&&(!last_sda)&&( this_sda);
 
 	reg	[2:0]	i2c_state;
 	reg	[7:0]	dreg, oreg, rd_val, i2c_rx_byte;
@@ -116,6 +134,8 @@ module	wbi2cslave #(
 	reg	[31:0]	pipe_mem;
 	reg	[1:0]	pipe_sel;
 	reg	r_trigger;
+
+	wire	[MEM_ADDR_BITS-1:0]	axis_addr;
 	//
 
 `ifndef	VERILATOR
@@ -125,6 +145,13 @@ module	wbi2cslave #(
 	end
 `endif
 	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Wishbone interactions: Read/write set memory
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
 
 	// r_data, r_addr, r_we
 	// {{{
@@ -133,34 +160,36 @@ module	wbi2cslave #(
 	begin
 		if (!READ_ONLY)
 		begin
+			// Accept new data from one of three sources:
+			//  1. An I2C write from the I2C master
+			//	(Assuming the device can be adjusted via I2C)
+			//  2. A write from the AXI stream slave port
+			//  3. A WB write
+			//	(Assuming the device can be adjusted via WB)
+			// Writes require two clocks: one for the arbitration
+			// below, and a second one to actually write the data
+			// to memory.
 			if ((!I2C_READ_ONLY)&&(wr_stb[4]))
+			begin
 				r_we <= wr_stb[3:0];
-			else if ((!WB_READ_ONLY)&&(i_wb_stb)&&(i_wb_we))
+				r_addr <= i2c_addr[MEM_ADDR_BITS-1:2];
+				r_data <= {(4){wr_data}};
+			end else if (AXIS_SUPPORT && s_valid)
+			begin
+				r_we <= (axis_addr[1:0]);
+				r_addr <= axis_addr[MEM_ADDR_BITS-1:2];
+				r_data <= {(4){s_data}};
+			end else if ((!WB_READ_ONLY)&&(i_wb_stb)&&(i_wb_we))
+			begin
 				r_we <= i_wb_sel;
-			else
-				r_we <= 4'h0;
-			r_data  <= (wr_stb[4])? {(4){wr_data}} : i_wb_data;
-			r_addr  <= (wr_stb[4]) ? i2c_addr[(MEM_ADDR_BITS-1):2]
-					: i_wb_addr;
+				r_addr <= i_wb_addr;
+				r_data <= i_wb_data;
+			end
 		end else
 			r_we <= 4'h0;
-			// data and address are don't cares if READ_ONLY is set
-	end
-	// }}}
 
-	// Write to memory
-	// {{{
-	always @(posedge i_clk)
-	if (!READ_ONLY)
-	begin
-		if (r_we[3])
-			mem[r_addr][31:24] <= r_data[31:24];
-		if (r_we[2])
-			mem[r_addr][23:16] <= r_data[23:16];
-		if (r_we[1])
-			mem[r_addr][15: 8] <= r_data[15: 8];
-		if (r_we[0])
-			mem[r_addr][ 7: 0] <= r_data[ 7: 0];
+		if (i_reset)
+			r_we <= 4'h0;
 	end
 	// }}}
 
@@ -176,8 +205,74 @@ module	wbi2cslave #(
 	always @(posedge i_clk)
 		o_wb_ack <= (i_wb_stb)&&(!o_wb_stall);
 
-	assign	o_wb_stall = (!READ_ONLY)&&(wr_stb[4]);
+	// Stall on any write, when another source is also attempting to write
+	//   to memory at the same time.
+	assign	o_wb_stall = i_wb_we && ((!I2C_READ_ONLY && wr_stb[4])
+						|| (AXIS_SUPPORT && s_valid));
 	// }}}
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// AXI Stream incoming data
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
+
+	// AXI stream data can be used to set the memory of this I2C slave.
+	// Writes will set one byte of memory at a time, and writes with TLAST
+	// set will reset the address back to the beginning.
+
+	generate if (AXIS_SUPPORT)
+	begin : GEN_AXIS_ADDR
+		reg	[MEM_ADDR_BITS-1:0]	r_axis_addr;
+
+		initial	r_axis_addr = 0;
+		always @(posedge i_clk)
+		if (i_reset)
+			r_axis_addr <= 0;
+		else if (s_valid && s_ready)
+		begin
+			if (s_last)
+				r_axis_addr <= 0;
+			else
+				r_axis_addr <= axis_addr + 1;
+		end
+
+		assign	axis_addr = r_axis_addr;
+
+	end else begin : NO_AXIS_ADDR_SUPPORT
+		assign	axis_addr = 0;
+	end endgenerate
+
+	assign	s_ready = (!AXIS_SUPPORT || I2C_READ_ONLY || !wr_stb[4]);
+
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// Write to memory
+	// {{{
+	always @(posedge i_clk)
+	if (!READ_ONLY)
+	begin
+		if (r_we[3])
+			mem[r_addr][31:24] <= r_data[31:24];
+		if (r_we[2])
+			mem[r_addr][23:16] <= r_data[23:16];
+		if (r_we[1])
+			mem[r_addr][15: 8] <= r_data[15: 8];
+		if (r_we[0])
+			mem[r_addr][ 7: 0] <= r_data[ 7: 0];
+	end
+	// }}}
+	////////////////////////////////////////////////////////////////////////
+	//
+	// I2C Controller
+	// {{{
+	////////////////////////////////////////////////////////////////////////
+	//
+	//
+
 
 	//
 	//
@@ -189,26 +284,26 @@ module	wbi2cslave #(
 	// 2FF Synchronizer
 	localparam	PL=2;
 	always @(posedge i_clk)
-		i2c_pipe <= { i2c_pipe[(2*PL-3):0], i_i2c_sck, i_i2c_sda };
+		i2c_pipe <= { i2c_pipe[(2*PL-3):0], i_i2c_scl, i_i2c_sda };
 
 	// Capture the last values
 	always @(posedge i_clk)
 	begin
-		last_sck <= i2c_pipe[(2*PL-1)];
+		last_scl <= i2c_pipe[(2*PL-1)];
 		last_sda <= i2c_pipe[(2*PL-2)];
 	end
 
-	// i2c_state, o_i2c_sck, o_i2c_sda, i2c_slave_ack, i2c_*x_stb,dreg,oreg
+	// i2c_state, o_i2c_scl, o_i2c_sda, i2c_slave_ack, i2c_*x_stb,dreg,oreg
 	// {{{
 	initial	i2c_state = I2CIDLE;
-	initial	o_i2c_sck = 1'b1;
+	initial	o_i2c_scl = 1'b1;
 	initial	o_i2c_sda = 1'b1;
 	initial	i2c_slave_ack  = 1'b1;
 	always	@(posedge i_clk)
 	begin
 		// Default is to do nothing with the output ports.  A 1'b1 does
 		// that.
-		o_i2c_sck <= 1'b1;
+		o_i2c_scl <= 1'b1;
 		o_i2c_sda <= 1'b1;
 		i2c_tx_stb <= 1'b0;
 		i2c_rx_stb <= 1'b0;
@@ -428,14 +523,18 @@ module	wbi2cslave #(
 	// }}}
 
 	assign	i2c_tx_byte = rd_val;
-
+	// }}}
 	// Debug port
 	// {{{
 	initial	r_trigger = 1'b0;
 	always @(posedge i_clk)
 		r_trigger <= i2c_start;
-	assign	o_dbg = { r_trigger, 27'h0,
-			i_i2c_sck, i_i2c_sda, o_i2c_sck, o_i2c_sda // 4b
+
+	assign	o_dbg = { r_trigger, 3'h0,
+			i_wb_stb, i_wb_we && i_wb_stb, o_wb_stall,
+					o_wb_ack, i_wb_addr[7:0],	// 12b
+			s_valid, s_ready, s_last, 1'b0, s_data,		// 12b
+			i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda	//  4b
 			};
 	// }}}
 
@@ -474,41 +573,41 @@ module	wbi2cslave #(
 		assert(f_outstanding == 0);
 
 	always @(*)
-	if (!o_i2c_sck)
-		assume(!i_i2c_sck);
+	if (!o_i2c_scl)
+		assume(!i_i2c_scl);
 
 	always @(*)
 	if (!o_i2c_sda)
 		assume(!i_i2c_sda);
 
 	sequence INPUTBIT(BIT)
-		(!this_sck)&&(this_sda == BIT)    [1:$]
-		##1 (this_sck)&&(this_sda == BIT) [1:$]
-		##1 (!this_sck)&&(this_sda == BIT) [1:$]
+		(!this_scl)&&(this_sda == BIT)    [1:$]
+		##1 (this_scl)&&(this_sda == BIT) [1:$]
+		##1 (!this_scl)&&(this_sda == BIT) [1:$]
 	endsequence
 
 	sequence OUTPUTBIT(BIT)
-		(!this_sck)&&(this_sda == BIT)    [1:$]
-		##1 (this_sck)&&(this_sda == BIT) [1:$]
-		##1 (!this_sck) [1:$]
+		(!this_scl)&&(this_sda == BIT)    [1:$]
+		##1 (this_scl)&&(this_sda == BIT) [1:$]
+		##1 (!this_scl) [1:$]
 	endsequence
 
 	sequence STOPBIT(BIT)
-		(this_sck) throughout
+		(this_scl) throughout
 		  ((!this_sda) [1:$] ##1 (this_sda))
 	endsequence
 
 	sequence STARTBIT(BIT)
-		(this_sck) throughout
+		(this_scl) throughout
 		  ((this_sda) [1:$] ##1 (!this_sda))
 	endsequence
 
-	wire	i2c_stop   = ( last_sck)&&( this_sck)&&(!last_sda)&&( this_sda);
+	wire	i2c_stop   = ( last_scl)&&( this_scl)&&(!last_sda)&&( this_sda);
 
 	sequence PREAMBLE
 		(i2c_start)
-		##1 (this_sck)&&(!this_sda) [1:$]
-		##1 (!this_sck)&&(!this_sda) [1:$]
+		##1 (this_scl)&&(!this_sda) [1:$]
+		##1 (!this_scl)&&(!this_sda) [1:$]
 		##1 ADDRBIT(SLAVE_ADDRESS[6])
 		##1 ADDRBIT(SLAVE_ADDRESS[5])
 		##1 ADDRBIT(SLAVE_ADDRESS[4])
