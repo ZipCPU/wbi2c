@@ -120,7 +120,8 @@ module	wbi2ccpu #(
 		parameter	ADDRESS_WIDTH = 29,
 		parameter	DATA_WIDTH = 32,
 		parameter	I2C_WIDTH = 8,
-		parameter	AXIS_ID_WIDTH = 0,
+		parameter	AXIS_ID_WIDTH = 2,
+		parameter [((AXIS_ID_WIDTH>0)?AXIS_ID_WIDTH:1)-1:0] DEF_CHANNEL = 0,
 		localparam	AW = ADDRESS_WIDTH,
 		localparam	DW = DATA_WIDTH,
 		localparam	RW = I2C_WIDTH,
@@ -355,7 +356,8 @@ module	wbi2ccpu #(
 		// {{{
 		.ADDRESS_WIDTH(BAW),
 		.DATA_WIDTH(DW),
-		.INSN_WIDTH(8)
+		.INSN_WIDTH(8),
+		.OPT_LITTLE_ENDIAN(1'b0)
 		// }}}
 	) u_fetch (
 		// {{{
@@ -491,7 +493,8 @@ module	wbi2ccpu #(
 
 		// Jump instruction
 		// {{{
-		if ((pf_valid && pf_ready && pf_insn[7:4] == CMD_JUMP)
+		if ((pf_valid && pf_ready && !imm_cycle
+						&& pf_insn[7:4] == CMD_JUMP)
 			||(half_valid && half_ready
 						&& half_insn[3:0] == CMD_JUMP))
 		begin
@@ -693,6 +696,8 @@ module	wbi2ccpu #(
 		if (insn_valid && s_tready && insn[11:8] == CMD_STOP
 				&& soft_halt_request)
 			r_halted <= 1'b1;
+		if (soft_halt_request && i2c_abort)
+			r_halted <= 1'b1;
 		if (pf_valid && pf_ready && pf_illegal)
 			r_halted <= 1'b1;
 		if (insn_valid && s_tready && insn[11:8] == CMD_HALT)
@@ -718,7 +723,7 @@ module	wbi2ccpu #(
 	if (i_reset)
 		r_aborted <= 1'b0;
 	else begin
-		if (i2c_abort && r_halted)
+		if (i2c_abort && !r_halted)
 			r_aborted <= 1'b1;
 
 		if (bus_write)
@@ -865,6 +870,7 @@ module	wbi2ccpu #(
 		// }}}
 	);
 `endif
+	// }}}
 
 	// mid_axis_pkt, r_channel
 	// {{{
@@ -886,8 +892,8 @@ module	wbi2ccpu #(
 			mid_axis_pkt <= !M_AXIS_TLAST;
 
 		always @(posedge i_clk)
-		if (i_reset)
-			r_channel <= 0;
+		if (i_reset || r_halted)
+			r_channel <= DEF_CHANNEL;
 		else if (insn_valid && insn[11:8] == CMD_CHANNEL && s_tready)
 			r_channel <= insn[AXIS_ID_WIDTH-1:0];
 
@@ -912,7 +918,9 @@ module	wbi2ccpu #(
 	end endgenerate
 	// }}}
 
-	assign	o_debug = { !r_halted || insn_valid, ovw_data[OVW_VALID],
+	assign	o_debug = {
+			!r_halted || insn_valid,
+			ovw_data[OVW_VALID],
 			i2c_abort, i2c_stretch, half_insn,
 			r_wait, soft_halt_request,
 			w_control[21:0] };

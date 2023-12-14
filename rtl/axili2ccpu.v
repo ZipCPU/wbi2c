@@ -206,6 +206,8 @@ module	axili2ccpu #(
 
 	// Local declarations
 	// {{{
+	localparam	BAW = AW; // Byte address width
+
 	wire	i_clk = S_AXI_ACLK;
 	wire	i_reset = !S_AXI_ARESETN;
 
@@ -251,11 +253,11 @@ module	axili2ccpu #(
 
 	wire			cpu_reset, cpu_clear_cache;
 	reg			cpu_new_pc;
-	reg	[AW-1:0]	pf_jump_addr;
+	reg	[BAW-1:0]	pf_jump_addr;
 	wire			pf_valid;
 	wire			pf_ready;
 	wire	[7:0]		pf_insn;
-	wire	[AW-1:0]	pf_insn_addr;
+	wire	[BAW-1:0]	pf_insn_addr;
 	wire			pf_illegal;
 
 	reg			half_valid, imm_cycle;
@@ -270,7 +272,7 @@ module	axili2ccpu #(
 	reg			i2c_ckedge;
 	wire			i2c_stretch;
 	reg	[11:0]		i2c_ckcount, ckcount;
-	reg	[AW-1:0]	abort_address, jump_target;
+	reg	[BAW-1:0]	abort_address, jump_target;
 	reg			r_wait, soft_halt_request, r_halted, r_err,
 				r_aborted;
 	wire			r_manual, r_sda, r_scl;
@@ -404,7 +406,7 @@ module	axili2ccpu #(
 		ADR_OVERRIDE:	bus_read_data[15:0] <= {
 					r_scl, r_sda, i_i2c_scl, i_i2c_sda,
 					r_manual, r_aborted, ovw_data };
-		ADR_ADDRESS:	bus_read_data[AW-1:0] <= pf_insn_addr;
+		ADR_ADDRESS:	bus_read_data[BAW-1:0] <= pf_insn_addr;
 		ADR_CKCOUNT:	bus_read_data[11:0] <= ckcount;
 		// default:	bus_read_data <= 0;
 		endcase
@@ -584,7 +586,8 @@ module	axili2ccpu #(
 
 		// Jump instruction
 		// {{{
-		if ((pf_valid && pf_ready && pf_insn[7:4] == CMD_JUMP)
+		if ((pf_valid && pf_ready && !imm_cycle
+						&& pf_insn[7:4] == CMD_JUMP)
 			||(half_valid && half_ready
 						&& half_insn[3:0] == CMD_JUMP))
 		begin
@@ -607,7 +610,7 @@ module	axili2ccpu #(
 		if (bus_jump)
 		begin
 			cpu_new_pc   <= 1'b1;
-			pf_jump_addr <= bus_write_data[AW-1:0];
+			pf_jump_addr <= bus_write_data[BAW-1:0];
 		end
 		// }}}
 	end
@@ -733,7 +736,7 @@ module	axili2ccpu #(
 	if (i_reset)
 		abort_address <= RESET_ADDRESS;
 	else if (bus_jump)
-		abort_address <= bus_write_data[AW-1:0];
+		abort_address <= bus_write_data[BAW-1:0];
 	else if (pf_valid && pf_ready && !imm_cycle && pf_insn[7:4]== CMD_ABORT)
 			// || pf_insn == { CMD_START, CMD_SEND })
 		abort_address <= pf_insn_addr + 1;
@@ -745,7 +748,7 @@ module	axili2ccpu #(
 	if (i_reset)
 		jump_target <= RESET_ADDRESS;
 	else if (bus_jump)
-		jump_target <= bus_write_data[AW-1:0];
+		jump_target <= bus_write_data[BAW-1:0];
 	else if (pf_valid && pf_ready && !imm_cycle
 			&& pf_insn[7:4] == CMD_TARGET)
 		jump_target <= pf_insn_addr + 1;
@@ -786,6 +789,8 @@ module	axili2ccpu #(
 		if (insn_valid && s_tready && insn[11:8] == CMD_STOP
 				&& soft_halt_request)
 			r_halted <= 1'b1;
+		if (soft_halt_request && i2c_abort)
+			r_halted <= 1'b1;
 		if (pf_valid && pf_ready && pf_illegal)
 			r_halted <= 1'b1;
 		if (insn_valid && s_tready && insn[11:8] == CMD_HALT)
@@ -811,7 +816,7 @@ module	axili2ccpu #(
 	if (i_reset)
 		r_aborted <= 1'b0;
 	else begin
-		if (i2c_abort && r_halted)
+		if (i2c_abort && !r_halted)
 			r_aborted <= 1'b1;
 
 		if (bus_write)
@@ -958,6 +963,7 @@ module	axili2ccpu #(
 		// }}}
 	);
 `endif
+	// }}}
 
 	// mid_axis_pkt, r_channel
 	// {{{
@@ -979,8 +985,8 @@ module	axili2ccpu #(
 			mid_axis_pkt <= !M_AXIS_TLAST;
 
 		always @(posedge i_clk)
-		if (i_reset)
-			r_channel <= 0;
+		if (i_reset || r_halted)
+			r_channel <= DEF_CHANNEL;
 		else if (insn_valid && insn[11:8] == CMD_CHANNEL && s_tready)
 			r_channel <= insn[AXIS_ID_WIDTH-1:0];
 
@@ -1005,7 +1011,9 @@ module	axili2ccpu #(
 	end endgenerate
 	// }}}
 
-	assign	o_debug = { !r_halted || insn_valid, ovw_data[OVW_VALID],
+	assign	o_debug = {
+			!r_halted || insn_valid,
+			ovw_data[OVW_VALID],
 			i2c_abort, i2c_stretch, half_insn,
 			r_wait, soft_halt_request,
 			w_control[21:0] };
