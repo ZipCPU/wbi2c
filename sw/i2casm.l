@@ -92,6 +92,7 @@ void	addimm_lbl(const char *str);
 void	addimm(int);
 void	adddefn(const char *str);
 void	adddir(int);
+void	ordir(int);
 void	label(const char *);
 %}
 
@@ -118,13 +119,17 @@ void	label(const char *);
 (?i:CHANNEL)	{ addinsn(I_CHANNEL); }
 (?i:CHNL)	{ addinsn(I_CHANNEL); }
 (?i:CHAN)	{ addinsn(I_CHANNEL); }
-[A-Za-z_][A-Za-z_0-9]*[ \t]*=[ \t]*0[xX][0-9A-Fa-f] { adddefn(yytext);}
+[A-Za-z_][A-Za-z_0-9]*[ \t]*=[ \t]*0[xX][0-9A-Fa-f]+ { adddefn(yytext);}
 [A-Za-z_][A-Za-z_0-9]*:	{ label(yytext); }
 [A-Za-z_][A-Za-z_0-9]*  { addimm_lbl(yytext); }
 ,\s*(?i:WR)	{ adddir(D_WR); }
 ,\s*(?i:RD)	{ adddir(D_RD); }
 ,\s*(?i:W)	{ adddir(D_WR); }
 ,\s*(?i:R)	{ adddir(D_RD); }
+[|]\s*(?i:WR)	{ ordir(D_WR); }
+[|]\s*(?i:RD)	{ ordir(D_RD); }
+[|]\s*(?i:W)	{ ordir(D_WR); }
+[|]\s*(?i:R)	{ ordir(D_RD); }
 0[xX][0-9A-Fa-f]+ { addimm(strtoul(yytext,NULL,16));}
 0[0-7]+		  { addimm(strtoul(yytext,NULL, 8));}
 [1-9][0-9]*	  { addimm(strtoul(yytext,NULL,10));}
@@ -253,6 +258,25 @@ void	adddir(int dir) {
 	} else {
 		char	b = m_binary[m_pos-1];
 		b = (b << 1) | dir;
+		m_binary[m_pos-1] = b;
+	}
+}
+// }}}
+
+void	ordir(int dir) {
+	// {{{
+	if (verbose_flag)
+		fprintf(stderr, "OR-DIR: %s\n", (dir == D_RD) ? "RD":"WR");
+	if (m_pos < 2) {
+		fprintf(stderr, "ERR: Syntax err, direction with no send\n");
+	} else if ((((m_binary[m_pos-2] >> 4)&0x0f) != I_SEND)
+			&& ((m_binary[m_pos-2] & 0x0f) != I_SEND)) {
+		fprintf(stderr, "ERR: Syntax err, direction with no send\n");
+	} else if (m_last_insn != I_SEND) {
+		fprintf(stderr, "ERR: Syntax err, direction with no send\n");
+	} else {
+		char	b = m_binary[m_pos-1];
+		b |= dir;
 		m_binary[m_pos-1] = b;
 	}
 }
