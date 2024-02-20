@@ -12,7 +12,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2017-2023, Gisselquist Technology, LLC
+// Copyright (C) 2017-2024, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -55,6 +55,10 @@
 
 #ifdef	OLD_VERILATOR
 #define	VVAR(A)	v__DOT_ ## A
+#elif defined(ROOT_VERILATOR)
+#include "Vwbi2cmaster___024root.h"
+
+#define	VVAR(A)	rootp->wbi2cmaster__DOT_ ## A
 #else
 #define	VVAR(A)	wbi2cmaster__DOT_ ## A
 #endif
@@ -113,7 +117,7 @@ public:
 		ib = m_slave(m_core->o_i2c_scl, m_core->o_i2c_sda);
 		m_core->i_i2c_scl = ib.m_scl;
 		m_core->i_i2c_sda = ib.m_sda;
-		m_core->i_vstate = m_slave.vstate();
+		// m_core->i_vstate = m_slave.vstate();
 
 		if (debug)
 			dbgdump();

@@ -92,7 +92,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2021-2023, Gisselquist Technology, LLC
+// Copyright (C) 2021-2024, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -136,6 +136,8 @@ module	axili2ccpu #(
 		// way.
 		parameter [0:0]	OPT_MANUAL = 1'b1,
 		parameter		OPT_WATCHDOG = 0,
+		parameter [((AXIS_ID_WIDTH > 0) ? (AXIS_ID_WIDTH-1):0):0]
+					DEF_CHANNEL = 0,
 `ifdef	FORMAL
 		parameter [11:0]	DEF_CKCOUNT = 2,
 `else

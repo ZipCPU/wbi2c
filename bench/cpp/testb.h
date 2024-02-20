@@ -12,7 +12,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2015-2023, Gisselquist Technology, LLC
+// Copyright (C) 2015-2024, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
@@ -104,9 +104,9 @@ public:
 	}
 
 	virtual	void	reset(void) {
-		m_core->i_rst = 1;
+		m_core->i_reset = 1;
 		tick();
-		m_core->i_rst = 0;
+		m_core->i_reset = 0;
 		// printf("RESET\n");
 	}
 };

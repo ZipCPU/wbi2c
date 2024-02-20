@@ -17,7 +17,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2017-2023, Gisselquist Technology, LLC
+// Copyright (C) 2017-2024, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of the GNU General Public License as published
@@ -176,7 +176,7 @@ module	wbi2cslave #(
 				r_data <= {(4){wr_data}};
 			end else if (AXIS_SUPPORT && s_valid)
 			begin
-				r_we <= (axis_addr[1:0]);
+				r_we <= { 2'b00, axis_addr[1:0] };
 				r_addr <= axis_addr[MEM_ADDR_BITS-1:2];
 				r_data <= {(4){s_data}};
 			end else if ((!WB_READ_ONLY)&&(i_wb_stb)&&(i_wb_we))
@@ -532,7 +532,7 @@ module	wbi2cslave #(
 
 	assign	o_dbg = { r_trigger, 3'h0,
 			i_wb_stb, i_wb_we && i_wb_stb, o_wb_stall,
-					o_wb_ack, i_wb_addr[7:0],	// 12b
+					o_wb_ack, 2'b00,i_wb_addr[5:0],	// 12b
 			s_valid, s_ready, s_last, 1'b0, s_data,		// 12b
 			i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda	//  4b
 			};
