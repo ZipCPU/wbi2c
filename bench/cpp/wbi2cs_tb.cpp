@@ -55,17 +55,25 @@
 
 #ifdef	OLD_VERILATOR
 #define	VVAR(A)	v__DOT_ ## A
+#elif defined(ROOT_VERILATOR)
+#include "Vwbi2cslave___024root.h"
+
+#define	VVAR(A)	rootp->wbi2cslave__DOT_ ## A
 #else
 #define	VVAR(A)	wbi2cslave__DOT_ ## A
 #endif
 
+#ifdef	ROOT_VERILATOR
+#define	mem	VVAR(_mem.m_storage)
+#else
 #define	mem	VVAR(_mem)
+#endif
 
 #define	MEM_ADDR_BITS	8
 #define	FULMEMSZ	(1<<(MEM_ADDR_BITS))
 
 #define	SLAVE_ADDRESS	0x50
-#define	SCK	m_core->i_i2c_sck
+#define	SCK	m_core->i_i2c_scl
 #define	SDA	m_core->i_i2c_sda
 #define	MASTER_WR	0
 #define	MASTER_RD	1
@@ -73,8 +81,8 @@
 class	I2CS_TB : public WB_TB<Vwbi2cslave> {
 public:
 	I2CS_TB(void) {
-		m_core->i_i2c_sck = 1;
-		m_core->i_i2c_sda = 1;
+		SCK = 1;
+		SDA = 1;
 	}
 
 	~I2CS_TB(void) {}
@@ -90,14 +98,14 @@ public:
 		const bool	debug = false;
 		int	sck = SCK, sda = SDA;
 
-		SCK &= m_core->o_i2c_sck;
+		SCK &= m_core->o_i2c_scl;
 		SDA &= m_core->o_i2c_sda;
 
 		if (debug)
 			dbgdump();
 		WB_TB<Vwbi2cslave>::tick();
 
-		SCK = sck & m_core->o_i2c_sck;
+		SCK = sck & m_core->o_i2c_scl;
 		SDA = sda & m_core->o_i2c_sda;
 
 	}
@@ -105,11 +113,11 @@ public:
 	// Internally, the design keeps things in one memory 32-bits wide.
 	// To get at a byte, we need to select which byte from within it.
 	unsigned char operator[](const int addr) const {
-		unsigned int *mem;
+		unsigned int *memp;
 		int	wv;
 
-		mem = m_core->mem;
-		wv = mem[(addr>>2)&((FULMEMSZ-1)>>2)];
+		memp = (unsigned int *)m_core->mem;
+		wv = memp[(addr>>2)&((FULMEMSZ-1)>>2)];
 		wv >>= 8*(3-(addr&0x03));
 		return wv & 0x0ff;
 	}

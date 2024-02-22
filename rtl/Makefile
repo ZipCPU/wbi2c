@@ -67,17 +67,17 @@ $(VDIRFB)/Vwbi2cmaster.cpp $(VDIRFB)/Vwbi2cmaster.h $(VDIRFB)/Vwbi2cmaster.mk: w
 ## Generic Verilator instructions
 ## {{{
 $(VDIRFB)/V%.cpp $(VDIRFB)/V%.h $(VDIRFB)/V%.mk: $(FBDIR)/%.v
-	verilator -cc -MMD -trace $*.v
+	verilator -cc -MMD --trace $*.v
 
 $(VDIRFB)/V%__ALL.a: $(VDIRFB)/V%.mk
 	cd $(VDIRFB); make -f V$*.mk
 ## }}}
 
 $(VDIRFB)/Vwbi2ccpu.cpp $(VDIRFB)/Vwbi2ccpu.h $(VDIRFB)/Vwbi2ccpu.mk: wbi2ccpu.v $(ZIPD)/core/dblfetch.v
-	verilator -cc -MMD -trace -y $(ZIPD)/core wbi2ccpu.v
+	verilator -cc -MMD --trace -y $(ZIPD)/core wbi2ccpu.v
 
 $(VDIRFB)/Vaxili2ccpu.cpp $(VDIRFB)/Vaxili2ccpu.h $(VDIRFB)/Vaxili2ccpu.mk: axili2ccpu.v $(BUSD)/skidbuffer.v $(BUSD)/axilfetch.v
-	verilator -cc -MMD -trace -y $(BUSD)/ axili2ccpu.v
+	verilator -cc -MMD --trace -y $(BUSD)/ axili2ccpu.v
 
 .PHONY: clean
 ## {{{

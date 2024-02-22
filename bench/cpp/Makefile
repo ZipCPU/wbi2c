@@ -55,7 +55,7 @@
 all: wbi2cs_tb wbi2cm_tb test
 PROGRAMS := wbi2cs_tb wbi2cm_tb
 all: $(PROGRAMS)
-
+.DELETE_ON_ERROR:
 CXX	:= g++
 OBJDIR  := obj-pc
 RTLD	:= ../../rtl
@@ -76,8 +76,8 @@ I2COBJS := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(I2CSRCS) $(COMNSRC)))
 I2CSRCM := wbi2cm_tb.cpp i2csim.cpp
 I2COBJM := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(I2CSRCM) $(COMNSRC)))
 SOURCES := $(I2CSRCS) $(I2CSRCM) $(COMNSRC)
-VLSRCS	:= verilated.cpp verilated_vcd_c.cpp
-VLOBJS  := $(OBJDIR)/verilated.o $(OBJDIR)/verilated_vcd_c.o
+VLSRCS	:= verilated.cpp verilated_vcd_c.cpp verilated_threads.cpp
+VLOBJS  := $(addprefix $(OBJDIR)/,$(subst .cpp,.o,$(VLSRCS)))
 VLIB	:= $(addprefix $(VROOT)/include/,$(VLSRCS))
 LIBS	:= $(RTLOBJD)/Vwbi2cslave__ALL.a
 LIBM	:= $(RTLOBJD)/Vwbi2cmaster__ALL.a
@@ -92,10 +92,10 @@ $(OBJDIR)/%.o: $(VROOT)/include/%.cpp
 	$(mk-objdir)
 	$(CXX) $(CFLAGS) $(INCS) -c $< -o $@
 
-wbi2cs_tb: $(I2COBJS) $(VLOBJS) $(RTLOBJD)/Vwbi2cslave__ALL.a
-	$(CXX) $(CFLAGS) $(INCS) $(I2COBJS) $(VLOBJS) $(RTLOBJD)/Vwbi2cslave__ALL.a -o $@
-wbi2cm_tb: $(I2COBJM) $(VLOBJS) $(RTLOBJD)/Vwbi2cmaster__ALL.a
-	$(CXX) $(CFLAGS) $(INCS) $(I2COBJM) $(VLOBJS) $(RTLOBJD)/Vwbi2cmaster__ALL.a -o $@
+wbi2cs_tb: $(I2COBJS) $(VLOBJS) $(LIBS)
+	$(CXX) $(CFLAGS) $(INCS) $(I2COBJS) $(VLOBJS) $(LIBS) -lpthread -o $@
+wbi2cm_tb: $(I2COBJM) $(VLOBJS) $(LIBM)
+	$(CXX) $(CFLAGS) $(INCS) $(I2COBJM) $(VLOBJS) $(LIBM) -lpthread -o $@
 
 .PHONY: test
 test: wbi2cs_tbtest wbi2cm_tbtest

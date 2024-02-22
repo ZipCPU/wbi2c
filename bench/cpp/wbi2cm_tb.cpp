@@ -63,7 +63,7 @@
 #define	VVAR(A)	wbi2cmaster__DOT_ ## A
 #endif
 
-#define	mem	VVAR(_mem)
+#define	mem	VVAR(_mem.m_storage)
 
 
 #define	MEM_ADDR_BITS	7
@@ -127,11 +127,11 @@ public:
 	// Internally, the design keeps things in one memory 32-bits wide.
 	// To get at a byte, we need to select which byte from within it.
 	unsigned char operator[](const int addr) const {
-		unsigned int *mem;
+		unsigned int *memp;
 		int	wv;
 
-		mem = m_core->mem;
-		wv = mem[(addr>>2)&WMEMMSK];
+		memp = (unsigned int *)m_core->mem;
+		wv = memp[(addr>>2)&WMEMMSK];
 		wv >>= 8*(3-(addr&0x03));
 		return wv & 0x0ff;
 	}
