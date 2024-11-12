@@ -15,6 +15,9 @@
 //	The AXI slave port was added as an after thought to allow forwarding
 //	of a read only I2C port (such as EDID info from a downstream monitor).
 //
+// Creator:	Dan Gisselquist, Ph.D.
+//		Gisselquist Technology, LLC
+//
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
 // Copyright (C) 2017-2024, Gisselquist Technology, LLC
@@ -174,9 +177,9 @@ module	wbi2cslave #(
 				r_we <= wr_stb[3:0];
 				r_addr <= i2c_addr[MEM_ADDR_BITS-1:2];
 				r_data <= {(4){wr_data}};
-			end else if (AXIS_SUPPORT && s_valid)
+			end else if (AXIS_SUPPORT && s_valid && s_ready)
 			begin
-				r_we <= { 2'b00, axis_addr[1:0] };
+				r_we <= (4'b1000 >> axis_addr[1:0]);
 				r_addr <= axis_addr[MEM_ADDR_BITS-1:2];
 				r_data <= {(4){s_data}};
 			end else if ((!WB_READ_ONLY)&&(i_wb_stb)&&(i_wb_we))
@@ -321,82 +324,76 @@ module	wbi2cslave #(
 			// }}}
 		I2CSTART: begin
 			// {{{
-				dbits <= 0;
-				if (i2c_negedge)
-					i2c_state <= I2CADDR;
+			dbits <= 0;
+			oreg <= 8'hff;
+			if (i2c_negedge)
+				i2c_state <= I2CADDR;
 			end
 			// }}}
 		I2CADDR: begin
 			// {{{
-				if (i2c_negedge)
-					dbits <= dbits + 1'b1;
-				if ((i2c_negedge)&&(dbits == 3'h7))
+			if (i2c_negedge)
+				dbits <= dbits + 1'b1;
+			if ((i2c_negedge)&&(dbits == 3'h7))
+			begin
+				slave_tx_rx_n <= dreg[0];
+				if (dreg[7:1] == SLAVE_ADDRESS)
 				begin
-					slave_tx_rx_n <= dreg[0];
-					if (dreg[7:1] == SLAVE_ADDRESS)
-					begin
-						i2c_state <= I2CSACK;
-						i2c_slave_ack <= 1'b0;
-					end else begin
-						// Ignore this, its not for
-						// me.
-						i2c_state <= I2CILLEGAL;
-						i2c_slave_ack <= 1'b1;
-					end
+					i2c_state <= I2CSACK;
+					i2c_slave_ack <= 1'b0;
+				end else begin
+					// Ignore this, its not for
+					// me.
+					i2c_state <= I2CILLEGAL;
+					i2c_slave_ack <= 1'b1;
 				end
-			end
+			end end
 			// }}}
 		I2CSACK: begin
 			// {{{
-				dbits <= 3'h0;
-				// NACK anything outside of our address range
-				o_i2c_sda <= i2c_slave_ack;
-				oreg <= rd_val;
-				if (i2c_negedge)
-				begin
-					i2c_state <= (slave_tx_rx_n)? I2CTX:I2CRX;
-					oreg <= i2c_tx_byte;
-				end
-			end
+			dbits <= 3'h0;
+			// NACK anything outside of our address range
+			o_i2c_sda <= i2c_slave_ack;
+			oreg <= rd_val;
+			if (i2c_negedge)
+			begin
+				i2c_state <= (slave_tx_rx_n)? I2CTX:I2CRX;
+				oreg <= i2c_tx_byte;
+			end end
 			// }}}
-		I2CRX: begin	// Slave reads from the bus
+		I2CRX: begin	// Slave reads from the bus, master writes
 			// {{{
-				//
-				// First byte received is always the memory
-				// address.
-				//
-				if (i2c_negedge)
-					dbits <= dbits + 1'b1;
-				if ((i2c_negedge)&&(dbits == 3'h7))
-				begin
-					i2c_rx_byte <= dreg;
-					i2c_rx_stb  <= 1'b1;
-					i2c_state <= I2CSACK;
-				end
-			end
+			//
+			// First byte received is always the memory
+			// address.
+			//
+			if (i2c_negedge)
+				dbits <= dbits + 1'b1;
+			if ((i2c_negedge)&&(dbits == 3'h7))
+			begin
+				i2c_rx_byte <= dreg;
+				i2c_rx_stb  <= 1'b1;
+				i2c_state <= I2CSACK;
+			end end
 			// }}}
 		I2CTX: begin	// Slave transmits
 			// {{{
-				// Read from the slave (that's us)
-				if (i2c_negedge)
-					dbits <= dbits + 1'b1;
-				if ((i2c_negedge)&&(dbits == 3'h7))
-				begin
-					i2c_tx_stb <= 1'b1;
-					i2c_state <= I2CMACK;
-				end
-				o_i2c_sda <= oreg[7];
-			end
+			// Read from the slave (that's us)
+			o_i2c_sda <= oreg[7];
+			if (i2c_negedge)
+				dbits <= dbits + 1'b1;
+			if ((i2c_negedge)&&(dbits == 3'h7))
+			begin
+				i2c_tx_stb <= 1'b1;
+				i2c_state <= I2CMACK;
+			end end
 			// }}}
 		I2CMACK: begin
 			// {{{
-				dbits <= 3'h0;
-				if (i2c_negedge)
-				begin
-					i2c_state <= I2CTX;
-					oreg <= i2c_tx_byte;
-				end
-				oreg <= rd_val;
+			dbits <= 3'h0;
+			if (i2c_negedge)
+				i2c_state <= (this_sda)? I2CIDLE:I2CTX;
+			oreg <= i2c_tx_byte;
 			end
 			// }}}
 		I2CILLEGAL:	dbits <= 3'h0;
@@ -530,11 +527,14 @@ module	wbi2cslave #(
 	always @(posedge i_clk)
 		r_trigger <= i2c_start;
 
-	assign	o_dbg = { r_trigger, 3'h0,
+	assign	o_dbg = { r_trigger, (i2c_start || i2c_stop),
+				(i2c_start||i2c_stop) ? {i2c_start, i2c_stop}
+						: i2c_state[1:0],
 			i_wb_stb, i_wb_we && i_wb_stb, o_wb_stall,
-					o_wb_ack, 2'b00,i_wb_addr[5:0],	// 12b
-			s_valid, s_ready, s_last, 1'b0, s_data,		// 12b
-			i_i2c_scl, i_i2c_sda, o_i2c_scl, o_i2c_sda	//  4b
+				o_wb_ack, dbits[1:0],
+				(i_wb_stb ? i_wb_addr[5:0] : 6'h0),	// 12b
+			s_valid, s_ready, s_last, 1'b0, s_data,	// 12b
+			this_scl, this_sda, o_i2c_scl, o_i2c_sda	//  4b
 			};
 	// }}}
 
