@@ -461,7 +461,7 @@ void	usage(void) {
 // }}}
 
 int main(int argc, char **argv) {
-	bool	dump_flag = false, cpp_flag = false;
+	bool	dump_flag = false, cpp_flag = false, hex_flag = true;
 	int	opt;
 	// dbgfp  = fopen("dump.txt",  "w");
 
@@ -469,28 +469,40 @@ int main(int argc, char **argv) {
 
 	int	nfiles = 0, argn;
 	FILE	*finp, *fout = stdout;
-	while(-1 != (opt = getopt(argc, argv, "hcdvo:"))) {
+	while(-1 != (opt = getopt(argc, argv, "bcdho:vx"))) {
 		// {{{
 		switch(opt) {
+		case 'b':	// Binary output
+			cpp_flag  = false;
+			hex_flag  = false;
+			dump_flag = false;
+			break;
+		case 'c':
+			cpp_flag  = true;
+			hex_flag  = false;
+			dump_flag = false;
+			break;
+		case 'd':
+			hex_flag  = false;
+			dump_flag = true;
+			cpp_flag  = false;
+			break;
 		case 'h':
 			usage();
 			exit(EXIT_SUCCESS);
 			break;
-		case 'c':
-			cpp_flag  = true;
-			dump_flag = false;
-			break;
-		case 'd':
-			dump_flag = true;
-			cpp_flag  = false;
+		case 'o':
+			// output_file = strcpy(optarg);
+			fout = fopen(optarg, "w");
 			break;
 		case 'v':
 			fprintf(stderr, "Verbose mode enabled\n");
 			verbose_flag = true;
 			break;
-		case 'o':
-			// output_file = strcpy(optarg);
-			fout = fopen(optarg, "w");
+		case 'x':
+			hex_flag  = true;
+			dump_flag = false;
+			cpp_flag  = false;
 			break;
 		}
 	}
@@ -610,6 +622,30 @@ int main(int argc, char **argv) {
 				else
 					fprintf(fout, ",\n\t");
 			} fprintf(fout, "};\n");
+		} else if (hex_flag) {
+			unsigned	acc = 0;
+
+			for(int p=0; p<m_pos; p++) {
+				acc = (acc << 8) | (m_binary[p] & 0x0ff);
+
+				if ((p & 3)==3) {
+					fprintf(fout, " %08x", acc);
+					acc = 0;
+					if ((p & 0x1f) == 0x1f)
+						fprintf(fout, "\n");
+				}
+			}
+
+			if ((m_pos & 3) != 0) {
+				// m_pos & 3 == 1 -> shift by 24
+				// m_pos & 3 == 2 -> shift by 16
+				// m_pos & 3 == 3 -> shift by  8
+				acc <<= (8*(4- (m_pos & 3)));
+				fprintf(fout, " %08x\n", acc);
+				acc = 0;
+			} if ((m_pos & 0x1f) != 0) {
+				fprintf(fout, "\n");
+			}
 		} else {
 			fwrite(m_binary, sizeof(char), m_pos, fout);
 		}
