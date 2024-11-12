@@ -34,7 +34,7 @@
 // Copyright (C) 2021-2024, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
-// modify it under the terms of  the GNU General Public License as published
+// modify it under the terms of the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or (at
 // your option) any later version.
 //
@@ -594,9 +594,9 @@ module axisi2c #(
 			o_abort <= 1;
 
 		// COLLISION ABORT ON REQUEST!!
-		if (state == REPEAT_START && (o_sda != ck_sda))
+		if (state == REPEAT_START && !o_stretch && (o_sda != ck_sda))
 			o_abort <= 1;
-		if (state == REPEAT_START2 && (!ck_scl || !ck_sda))
+		if (state == REPEAT_START2 && !o_stretch &&(!ck_scl || !ck_sda))
 			o_abort <= 1;
 
 		if (OPT_ABORT_REQUEST && state == IDLE_STOPPED
