@@ -152,7 +152,10 @@ const char	*INSN[] = {
 int	m_binsz, m_pos;
 char	*m_binary = NULL;
 int	m_last_insn = I_NOOP;
-bool	m_half = false, m_halted = false;
+bool	m_half = false, m_halted = false, m_long = false
+	m_rx = false, m_rx_implied = false;
+unsigned m_count = 0;
+char	m_send[256];
 
 void	init_buffer(void) {
 	// {{{
@@ -187,26 +190,142 @@ void	addinsn(int i) {
 
 	char	b;
 
+	// Encode any outstanding strings before moving forwards
+	// {{{
+	if (m_last_insn == I_RXK && (i == I_RXK || i == I_RXN
+					|| i == I_RXLN || i == I_RXLK)) {
+		// {{{
+		if(m_rx_implied)
+			m_count++;
+		m_rx = true; m_rx_implied = true;
+		m_last_insn = i;
+		if (m_binary[m_pos-1] != 0) {
+			assert(m_binary[m_pos-1] == (I_RXK << 4));
+			m_binary[m_pos-1] = (i << 4);
+		} else {
+			assert(I_RXK == (m_binary[m_pos-2] & 0x0f));
+			m_binary[m_pos-2] &= 0x0f0;
+			m_binary[m_pos-2] |= i;
+		} return;
+		// }}}
+	} if (m_rx && m_rx_implied) {
+		m_count = 1; // No argument == count of 1
+	} if (m_rx) {
+		// {{{
+		assert(m_count > 0);
+		if (m_count <= 16 && m_binary[m_pos-1] != 0) {
+			m_binary[m_pos-1] |= (m_count-1);
+			m_count = 0;
+		} else if (m_binary[m_pos-1] != 0) {
+			assert(m_binary[m_pos-1] == (m_last_insn << 4));
+			m_binary[m_pos-1] = m_last_insn;
+		} if (m_count > 0) {
+			if (m_count > 256) {
+				m_binary[m_pos-1] &= 0x0f;
+				m_binary[m_pos-1] |= I_RXK;
+				m_binary[m_pos++] = 0xff;
+				m_count -= 256;
+			} else {
+				m_binary[m_pos++] = (m_count-1);
+				m_count = 0;
+			}
+		} while(m_count > 256) {
+			m_binary[m_pos++] = I_RXK;
+			m_binary[m_pos++] = 0xff;
+			m_count -= 256;
+		} if (m_count > 16) {
+			m_binary[m_pos++] = m_last_insn;
+			m_binary[m_pos++] = (m_count-1);
+			m_count = 0;
+		} else {
+			m_binary[m_pos++] = (m_last_insn << 4) | (m_count-1);
+			m_count = 0;
+		} m_long = false; m_rx = false; m_rx_implied = false;
+		// }}}
+	} if (m_long) { // Can only be a SEND instruction
+		if (i == I_SEND)
+			// Continue sending bytes.  No change required here.
+			return;
+		} if (0 == m_count) { // No data.  Remove the send instruction
+			// {{{
+			assert(m_pos >= 1);
+			if (m_binary[m_pos-1] == (I_SEND << 4)) {
+				// Half count word ...
+				m_binary[--m_pos] = 0;
+			} else {
+				// Whole count word
+				assert(m_binary[m_pos-1] == 0);
+				m_pos--; m_half = true;
+				m_binary[m_pos] &= 0x0f0;
+			}
+			m_long = false;
+			m_count = 0;
+			// }}}
+		} else if (m_count <= 16 && m_binary[m_pos-1] != 0) {
+			// {{{
+			m_binary[m_pos-1] |= (m_count-1);
+			m_long = false;
+			m_count = 0;
+			m_pos += m_count;
+			// }}}
+		} else { // if (m_count <= 256 )  -- Guaranteed
+			// {{{
+			m_binary[m_pos-1] |= (m_count-1);
+			m_pos += m_count;
+			m_long = false;
+			m_count = 0;
+			// }}}
+		}
+
+		m_half = false;
+		m_long = false;
+		m_count = 0;
+	}
+	// }}}
+
 	i &= 0x0f;
-	if (m_half) {
+	m_count = 0;
+	m_long  = false;
+	m_rx    = false;
+	m_rx_implied = false;
+	if (m_half) {	// Set the leat-significant nibble
+		// {{{
 		b = m_binary[m_pos-1];
 		b = (b & 0xf0) | i;
 		m_binary[m_pos-1] = b;
 		m_half = false;
 
 		m_halted = (i== I_HALT);
-	} else {
+
+		m_rx = false; m_rx_implied = false;
+		if (i == I_RXK  || i == I_RXN
+				|| i == I_RXLK || i == I_RXLN) {
+			m_rx = true;
+			m_rx_implied = true;
+		} if (i == I_SEND || m_rx) {
+			m_binary[m_pos++] = 0;	// Count of 1 ... initially
+			m_long  = true;
+		} else if (i == I_CHANNEL)  {
+			m_binary[m_pos++] = 0;
+		}
+		// }}}
+	} else {	// Set the most significant nibble, if not the whole
+		// {{{
 		b = (i<<4) | I_NOOP;
 		m_binary[m_pos] = b;
 
-		if (i == I_SEND || i == I_TARGET || i == I_ABORT
-				|| i == I_CHANNEL)  {
+		m_rx = (i == I_RXK || i == I_RXN
+				|| i == I_RXLK || i == I_RXLN);
+		m_rx_implied = m_rx;
+		if (i == I_SEND || m_rx || i == I_CHANNEL)  {
+			// No second half allowed.
 			m_half = false;
 		} else
 			m_half = true;
 		m_pos ++;
 
 		m_halted = (i== I_HALT);
+		// }}}
 	}
 
 	m_last_insn = i;
@@ -231,10 +350,48 @@ void	addimm_lbl(const char *id) {
 
 void	addimm(int imm) {
 	// {{{
-	if (m_last_insn == I_SEND || m_last_insn == I_CHANNEL) {
+	if (m_long && m_last_insn == I_SEND) {
+		// {{{
+		if (m_pos+m_count+3 >= m_binsz)
+			grow_buffer();
+		m_binary[m_pos+m_count] = imm;
+		m_count++;
+		if (m_count == 17) {
+			if (m_binary[m_pos-1] != 0) {
+				assert(m_binary[m_pos-1] == (I_SEND << 4));
+				for(k=0; k<m_count; k++)
+					m_binary[m_pos+m_count-k] = m_binary[m_pos_m_count-k-1];
+				m_binary[m_pos-1] = I_SEND;
+				m_binary[m_pos++] = 0;
+			}
+		} else if (m_count == 257) {
+			assert(m_binary[m_pos-1] == 0);
+			m_binary[m_pos-1] = 255;
+			m_pos += 256;
+			m_binary[m_pos++] = I_SEND << 4;
+			m_binary[m_pos] = imm;
+			m_count = 1;
+		}
+		// }}}
+	} else if (m_rx) {
+		// {{{
+		m_rx_implied = false;
+		m_count += imm;
+		if (m_count >= 256) {
+
+			m_count = 0;
+		}
+		// }}}
+	} else if (m_last_insn == I_CHANNEL) {
 		if (verbose_flag)
 			fprintf(stderr, "ADD-IMM: 0x%02x\n", imm & 0x0ff);
-		m_binary[m_pos++] = imm;
+		if (m_binary[m_pos-1] == 0 || imm <= 15)
+			m_binary[m_pos++] |= imm;
+		else {
+			assert(m_binary[m_pos-1] == (I_CHANNEL << 4));
+			m_binary[m_pos-1] = I_CHANNEL;
+			m_binary[m_pos++] = imm;
+		}
 		m_half = false;
 		m_halted = false;
 	}
@@ -286,59 +443,107 @@ void	dump(FILE *fp) {
 	// {{{
 	bool	prior_start = false;
 	for(int p=0; p<m_pos; p++) {
-		unsigned h = (m_binary[p] >> 4) & 0x0f;
+		unsigned h = (m_binary[p] >> 4) & 0x0f,
+				n = (m_binary[p] & 0x0f);
 
 		printf("%02x: ", p);
-		if ((h == I_SEND || (m_binary[p]&0x0f) == I_SEND))
-			fprintf(fp, "%02x %02x ", m_binary[p] & 0x0ff,
+		fprintf(fp, "%02x: ", p);
+		if (h == I_SEND) {
+			// {{{
+			count = n+1;
+			if (prior_start) {
+				unsigned	arg = m_binary[p+1];
+				unsigned	d = arg & 1;
+				fprintf(fp, "%02x %02x : SEND 0x%02x|%2s\n",
+					m_binary[p],
+					m_binary[p+1],
+					(arg >> 1),
+					(d == D_RD) ? "RD":"WR");
+				p++;
+				if (--count > 0)
+					fprintf(fp, "\t");
+			} else if (count == 1) {
+				fprintf(fp, "%02x %02x : SEND 0x%02x\n",
+					m_binary[p] & 0x0ff,
+					m_binary[p+1] & 0x0ff,
 					m_binary[p+1] & 0x0ff);
-		else if ((h == I_CHANNEL || (m_binary[p]&0x0f) == I_CHANNEL))
+				count--; p--;
+			} else {
+				fprintf(fp, "%02x    : SEND %3d\n",
+					m_binary[p] & 0x0ff,
+					(m_binary[p] & 0x0f) + 1);
+			} for(unsigned k=0; k<count; k++) {
+				fprintf(fp, "0x%02x", m_binary[p+k+1],
+					(k+1 == count) ? ",":"\n");
+				if (k+1 == count)
+					fprintf(fp, "\n");
+				else if (7 == (count & 7))
+					fprintf(fp, ",\n\t");
+				else
+					fprintf(fp, ", ");
+			} p += count;
+			continue;
+			// }}}
+		} else if (h== I_RXK || h== I_RXN || h== I_RXLK || h== I_RXLN) {
+			// {{{
+			count = n+1;
+			if (h == I_RXK) {
+				fprintf(fp, "%02x%3s : RXK  (%3d)\n", count);
+				continue;
+			} else if (count > 1) {
+				fprintf(fp, "%02x%3s : RXK  (%3d)\n", count-1);
+			} if (h == I_RXN) {
+				if (count <= 1)
+					fprintf(fp, "%02x%3s : RXN\n", m_binary[p] & 0x0ff, "");
+				else
+					fprintf(fp, "%6s : RXN\n", "");
+			} else if (h == I_RXLK) {
+				if (count <= 1)
+					fprintf(fp, "%02x%3s : RXLK\n",
+						m_binary[p] & 0x0ff, "");
+				else
+					fprintf(fp, "%6s : RXLK\n", "");
+			} else if (h == I_RXLN) {
+				if (count <= 1)
+					fprintf(fp, "%02x%3s : RXLN\n",
+						m_binary[p] & 0x0ff, "");
+				else
+					fprintf(fp, "%6s : RXLN\n", "");
+			} continue;
+			// }}}
+		} else if (h == I_CHANNEL) {
+			fprintf(fp, "%02x    ", m_binary[p] & 0x0ff);
+		else if (n == I_SEND || n == I_RXK || n == I_RXN
+					|| n == I_RXLK || n == I_RXLN
+			|| n == I_CHANNEL)
 			fprintf(fp, "%02x %02x ", m_binary[p] & 0x0ff,
-					m_binary[p+1] & 0x0ff);
+				m_binary[p+1] & 0x0ff);
 		else
 			fprintf(fp, "%02x%3s ", m_binary[p] & 0x0ff, "");
-
-		// fprintf(fp, "%s ", (prior_start) ? "P":" ");
 
 		switch(h) {
 		case I_NOOP:	fprintf(fp, "  NOOP\n"); break;
 		case I_START:	fprintf(fp, "  START\n"); break;
 		case I_STOP:	fprintf(fp, "  STOP\n"); break;
-		case I_SEND: if (prior_start) {
-				unsigned	arg = m_binary[++p] & 0x0ff;
-				int	d = arg & 1;
-				arg >>= 1;
-				if (d == D_RD)
-					// fprintf(fp, "  READ\t0x%02x\n", arg);
-					fprintf(fp, "  SEND\t0x%02x,RD\n", arg);
-				else
-					// fprintf(fp, "  WRITE\t0x%02x\n", arg);
-					fprintf(fp, "  SEND\t0x%02x,WR\n", arg);
-			} else {
-				fprintf(fp, "  SEND\t0x%02x\n",
-					m_binary[++p] & 0x0ff);
-			} break;
-		case I_RXK:	fprintf(fp, "  RXK\n"); break;
-		case I_RXN:	fprintf(fp, "  RXN\n"); break;
-		case I_RXLK:	fprintf(fp, "  RXLK\n"); break;
-		case I_RXLN:	fprintf(fp, "  RXLN\n"); break;
-		//
 		case I_WAIT:	fprintf(fp, "  WAIT\n"); break;
 		case I_HALT:	fprintf(fp, "  HALT\n"); break;
 		case I_ABORT:	fprintf(fp, "  ABORT\n"); break;
 		case I_TARGET:	fprintf(fp, "  TARGET\n"); break;
 		case I_JUMP:	fprintf(fp, "  JUMP\n"); break;
 		case I_CHANNEL: fprintf(fp, "  CHANNEL\t0x%02x\n",
-					m_binary[++p] & 0x0ff); break;
+				m_binary[++p] & 0x0ff); break;
+			// case I_SEND: case I_RX*: // handled above
 		default:	fprintf(fp, "  ILL\t(0x%x)\n", h); break;
 		}
 
 		prior_start = (h == I_START);
 
-		if (h == I_SEND || h == I_CHANNEL)
+		if (h == I_SEND || h == I_CHANNEL
+				|| h == I_RXK || h == I_RXN
+				|| h == I_RXLK || h == I_RXLN)
 			continue;
 
-		h = m_binary[p] & 0x0f;
+		h = n;
 
 		printf("%02x: ", p);
 		fprintf(fp, "%5s ", "");
@@ -348,7 +553,10 @@ void	dump(FILE *fp) {
 		case I_NOOP:	fprintf(fp, "| NOOP\n"); break;
 		case I_START:	fprintf(fp, "| START\n"); break;
 		case I_STOP:	fprintf(fp, "| STOP\n"); break;
-		case I_SEND: if (prior_start) {
+		case I_SEND:
+			// {{{
+			count = m_binary[++p] + 1;
+			if (prior_start) {
 				unsigned	arg = m_binary[++p] & 0x0ff;
 				int	d = arg & 1;
 				arg >>= 1;
@@ -358,15 +566,54 @@ void	dump(FILE *fp) {
 				else
 					// fprintf(fp, "| WRITE\t0x%02x\n", arg);
 					fprintf(fp, "| SEND\t0x%02x,WR\n", arg);
+				count--;
+			} else if (count == 1) {
+				fprintf(fp, "| SEND 0x%02x\n",
+					m_binary[++p] & 0x0ff);
+				count--;
 			} else {
 				fprintf(fp, "| SEND\t0x%02x\n",
 					m_binary[++p] & 0x0ff);
+				count--;
+			} for(unsigned k=0; k<count; k++) {
+				fprintf(fp, "0x%02x", m_binary[p+k+1],
+					(k+1 == count) ? ",":"\n");
+				if (k+1 == count)
+					fprintf(fp, "\n");
+				else if (7 == (count & 7))
+					fprintf(fp, ",\n\t");
+				else
+					fprintf(fp, ", ");
+			} p += count;
+			break;
+			// }}}
+		case I_RXK: case I_RXN: case I_RXLK: case I_RXLN:
+			// {{{
+			count = m_binary[++p] + 1;
+			if (count <= 1) {
+				fprintf(fp, "| RXK\n");
+				fprintf(fp, "| RXN\n");
+				fprintf(fp, "| RXLK\n");
+				fprintf(fp, "| RXLN\n");
+			} else switch(n) {
+				case I_RXK:
+					fprintf(fp, "| RXK   (%3d)\n", count);
+					break;
+				case I_RXN:
+					fprintf(fp, "| RXK   (%3d)\n", count-1);
+		printf("%02x: ", p);
+					fprintf(fp, "%4s:%6s  | RXN\n", "", "");
+					break;
+				case I_RXLK:
+					fprintf(fp, "| RXK   (%3d)\n", count-1);
+					fprintf(fp, "%4s:%6s  | RXLK\n", "", "");
+					break;
+				default: // case I_RXLN:
+					fprintf(fp, "| RXK   (%3d)\n", count-1);
+					fprintf(fp, "%4s:%6s  | RXLN\n", "", "");
+					break;
 			} break;
-		case I_RXK:	fprintf(fp, "| RXK\n"); break;
-		case I_RXN:	fprintf(fp, "| RXN\n"); break;
-		case I_RXLK:	fprintf(fp, "| RXLK\n"); break;
-		case I_RXLN:	fprintf(fp, "| RXLN\n"); break;
-		//
+			// }}}
 		case I_WAIT:	fprintf(fp, "| WAIT\n"); break;
 		case I_HALT:	fprintf(fp, "| HALT\n"); break;
 		case I_ABORT:	fprintf(fp, "| ABORT\n"); break;
