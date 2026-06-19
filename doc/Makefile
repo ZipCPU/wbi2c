@@ -1,8 +1,8 @@
 ################################################################################
 ##
-## Filename: 	Makefile
+## Filename:	doc/Makefile
 ## {{{
-## Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+## Project:	WBI2C ... a set of I2C controller(s)
 ##
 ## Purpose:	To coordinate the build of documentation PDFs from their
 ##		LaTeX sources.
@@ -18,10 +18,10 @@
 ##
 ################################################################################
 ## }}}
-## Copyright (C) 2015-2024, Gisselquist Technology, LLC
+## Copyright (C) 2015-2026, Gisselquist Technology, LLC
 ## {{{
 ## This program is free software (firmware): you can redistribute it and/or
-## modify it under the terms of  the GNU General Public License as published
+## modify it under the terms of the GNU General Public License as published
 ## by the Free Software Foundation, either version 3 of the License, or (at
 ## your option) any later version.
 ##

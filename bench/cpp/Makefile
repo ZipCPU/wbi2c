@@ -1,8 +1,8 @@
 ################################################################################
 ##
-## Filename:	Makefile
+## Filename:	bench/cpp/Makefile
 ## {{{
-## Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+## Project:	WBI2C ... a set of I2C controller(s)
 ##
 ## Purpose:	This makefile builds the final verilator simulation of the
 ##		i2c core(s).  Specifically, it builds the final C++ portion
@@ -28,7 +28,7 @@
 ##
 ################################################################################
 ## }}}
-## Copyright (C) 2015-2024, Gisselquist Technology, LLC
+## Copyright (C) 2015-2026, Gisselquist Technology, LLC
 ## {{{
 ## This program is free software (firmware): you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as published

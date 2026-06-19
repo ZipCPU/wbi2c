@@ -1,8 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename:	wbi2master.v
+// Filename:	rtl/wbi2cmaster.v
 // {{{
-// Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+// Project:	WBI2C ... a set of I2C controller(s)
 //
 // Purpose:	This module communicates with an external I2C slave, allowing
 //		the WB-master to command the reading and/or writing of I2C
@@ -60,7 +60,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2015-2024, Gisselquist Technology, LLC
+// Copyright (C) 2015-2026, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of the GNU General Public License as published

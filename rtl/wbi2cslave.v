@@ -1,8 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename: 	wbi2cslave.v
+// Filename:	rtl/wbi2cslave.v
 // {{{
-// Project:	WBI2C ... a set of Wishbone controlled I2C controllers
+// Project:	WBI2C ... a set of I2C controller(s)
 //
 // Purpose:	To create an I2C Slave that can be accessed via a wishbone bus.
 //
@@ -20,7 +20,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2017-2024, Gisselquist Technology, LLC
+// Copyright (C) 2015-2026, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of the GNU General Public License as published
@@ -87,6 +87,7 @@ module	wbi2cslave #(
 
 	// Local declarations
 	// {{{
+	localparam	PL=2;
 	localparam [0:0] READ_ONLY = WB_READ_ONLY && I2C_READ_ONLY
 							&& !AXIS_SUPPORT;
 
@@ -285,7 +286,6 @@ module	wbi2cslave #(
 	//
 
 	// 2FF Synchronizer
-	localparam	PL=2;
 	always @(posedge i_clk)
 		i2c_pipe <= { i2c_pipe[(2*PL-3):0], i_i2c_scl, i_i2c_sda };
 

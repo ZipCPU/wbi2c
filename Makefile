@@ -1,8 +1,8 @@
 ################################################################################
 ##
-## Filename: 	Makefile
+## Filename:	Makefile
 ## {{{
-## Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+## Project:	WBI2C ... a set of I2C controller(s)
 ##
 ## Purpose:	This is the master Makefile for the project.  It coordinates
 ##		the build of a Verilator test, "proving" that this core works
@@ -14,10 +14,10 @@
 ##
 ################################################################################
 ## }}}
-## Copyright (C) 2015-2024, Gisselquist Technology, LLC
+## Copyright (C) 2015-2026, Gisselquist Technology, LLC
 ## {{{
 ## This program is free software (firmware): you can redistribute it and/or
-## modify it under the terms of  the GNU General Public License as published
+## modify it under the terms of the GNU General Public License as published
 ## by the Free Software Foundation, either version 3 of the License, or (at
 ## your option) any later version.
 ##

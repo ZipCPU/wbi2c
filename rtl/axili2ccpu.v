@@ -1,8 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename:	axili2ccpu.v
+// Filename:	rtl/axili2ccpu.v
 // {{{
-// Project:	WBI2C ... a set of Wishbone controlled I2C controller(s)
+// Project:	WBI2C ... a set of I2C controller(s)
 //
 // Purpose:	This is a copy of the WBI2CCPU, save that it has been modified
 //		to work with AXI4 instead of Wishbone.
@@ -92,10 +92,10 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2021-2024, Gisselquist Technology, LLC
+// Copyright (C) 2015-2026, Gisselquist Technology, LLC
 // {{{
 // This program is free software (firmware): you can redistribute it and/or
-// modify it under the terms of  the GNU General Public License as published
+// modify it under the terms of the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or (at
 // your option) any later version.
 //
