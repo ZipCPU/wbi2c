@@ -716,29 +716,35 @@ unsigned	filesz(FILE *fp) {
 void	usage(void) {
 	// {{{
 	fprintf(stderr, ""
-"Usage: i2casm [-hdv] [-o <outfile>] [infiles ...]\n"
+"Usage: i2casm [-bcdhvx] [-o <outfile>] [infiles ...]\n"
 "\n"
-"\t-h\tThis usage statement\n"
 "\t-c\tProduce a C file output, declaring a variable array\n"
 "\t-d\tDisassemble the given file, rather than assembling it\n"
+"\t-h\tThis usage statement\n"
 "\t-v\tVerbose mode (may or may not do anything)\n"
+"\t-x[#[lb]]\tGenerate a hexadecimal output file, suitable for $readmemh\n"
+"\t\twith # bit words, and [l]ittle endian or [b]ig endian encoding.\n"
+"\t\tIf no width is given, 8b is assumed.  If no encoding is given,\n"
+"\t\tBig-endian is assumed.\n"
 "\t-o <outfile>\tWrite the results to <outfile>.  If <outfile> is not"
 "\t\tgiven, results will be written to standard out.\n"
 "\t<infiles ...>\tA set of filenames, separated by spaces, to be either\n"
-"\t\tassembled or (in the case of -d) disassembled.\n");
+"\t\tassembled or (in the case of -d) disassembled.  If no files\n"
+"\t\tare given, the script will be read from the standard input.\n");
 }
 // }}}
 
 int main(int argc, char **argv) {
 	bool	dump_flag = false, cpp_flag = false, hex_flag = true;
-	int	opt;
+	bool	big_endian = true;
+	int	opt, width=8;
 	// dbgfp  = fopen("dump.txt",  "w");
 
 	init_buffer();
 
 	int	nfiles = 0, argn;
 	FILE	*finp, *fout = stdout;
-	while(-1 != (opt = getopt(argc, argv, "bcdho:vx"))) {
+	while(-1 != (opt = getopt(argc, argv, "bcdho:vx::"))) {
 		// {{{
 		switch(opt) {
 		case 'b':	// Binary output
@@ -772,6 +778,12 @@ int main(int argc, char **argv) {
 			hex_flag  = true;
 			dump_flag = false;
 			cpp_flag  = false;
+			if (isdigit(optarg[0]))
+				width = atoi(optarg);
+			if (optarg[strlen(optarg)-1] == 'l')
+				big_endian = false;
+			if (optarg[strlen(optarg)-1] == 'b')
+				big_endian = true;
 			break;
 		}
 	}
@@ -783,6 +795,9 @@ int main(int argc, char **argv) {
 		if (dump_flag)
 			fprintf(stderr, "Attempting to dump input files\n");
 	}
+
+	assert(0 == (width & 0x07));
+	width >>= 3;
 
 	// Process individual files
 	// {{{
@@ -880,7 +895,7 @@ int main(int argc, char **argv) {
 	// Write the file out
 	// {{{
 	if (!dump_flag) {
-		if (cpp_flag) {
+		if (cpp_flag) {		// Write a C++ output header file
 			// {{{
 			unsigned	sympos = 0, tabstart = 0;
 
@@ -905,31 +920,71 @@ int main(int argc, char **argv) {
 					fprintf(fout, ",\n\t");
 			} fprintf(fout, "};\n");
 			// }}}
-		} else if (hex_flag) {
+		} else if (hex_flag) {	// Writ hex file, user selected width
 			// {{{
-			unsigned	acc = 0;
+			unsigned	acc = 0, ln=0, s;
+			char		lbuf[128];
 
+printf("WIDTH = %d, big_endian is %s\n", width, big_endian ? "true":"false");
 			for(int p=0; p<m_pos; p++) {
-				acc = (acc << 8) | (m_binary[p] & 0x0ff);
+				lbuf[0] = '\0';
+for(int k=0; k<128; k++)
+	lbuf[k] = '\0';
 
-				if ((p & 3)==3) {
-					fprintf(fout, " %08x", acc);
-					acc = 0;
-					if ((p & 0x1f) == 0x1f)
-						fprintf(fout, "\n");
+				if (big_endian) {
+					// {{{
+					for(s=0; s<width && s+p < m_pos; s++) {
+						unsigned v = m_binary[p+s];
+
+						v &= 0x0ff;
+						sprintf(&lbuf[strlen(lbuf)],
+							"%02x", v);
+					} for(; s < width; s++) {
+						strcat(lbuf, "00");
+					}
+					// }}}
+				} else {
+					// {{{
+					char *d = &lbuf[2*width];
+
+					*d-- = '\0';
+
+					for(s=0; s<width && s+p < m_pos; s++) {
+						unsigned v = m_binary[p+s];
+
+						v &= 0x0ff;
+						if ((v & 0x0f) >= 10)
+							*d-- = 'a'+(v&0x0f)-10;
+						else
+							*d-- = '0'+(v&0x0f);
+// printf("CH = %02x -> %02x %c\n", v, d[1] & 0x0ff, d[1]);
+
+						v >>= 4;
+
+						if (v >= 10)
+							*d-- ='a'+ v -10;
+						else
+							*d-- ='0'+ v;
+
+					} for(; s < width; s++) {
+						*d-- = '0';
+						*d-- = '0';
+					}
+					// }}}
 				}
+
+				ln += width*2 + 1;
+				fputs(lbuf, fout);
+				if (ln + (width*2) >= 80) {
+					fputc('\n', fout);
+					ln = 0;
+				} else {
+					fputc(' ', fout);
+				} p += width -1;
 			}
 
-			if ((m_pos & 3) != 0) {
-				// m_pos & 3 == 1 -> shift by 24
-				// m_pos & 3 == 2 -> shift by 16
-				// m_pos & 3 == 3 -> shift by  8
-				acc <<= (8*(4- (m_pos & 3)));
-				fprintf(fout, " %08x\n", acc);
-				acc = 0;
-			} if ((m_pos & 0x1f) != 0) {
-				fprintf(fout, "\n");
-			}
+			if (ln != 0)
+				fputc('\n', fout);
 			// }}}
 		} else {
 			fwrite(m_binary, sizeof(char), m_pos, fout);
