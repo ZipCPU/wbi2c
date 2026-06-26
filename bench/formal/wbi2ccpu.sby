@@ -6,7 +6,7 @@ cvr
 [options]
 prf: mode prove
 cvr: mode cover
-depth 3
+depth 5
 cvr: depth 400
 
 [engines]

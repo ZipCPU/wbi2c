@@ -133,6 +133,11 @@ module	wbi2ccpu #(
 		// so to directly control the wires without any logic in the
 		// way.
 		parameter [0:0]	OPT_MANUAL = 1'b1,
+		// If OPT_LITTLE_ENDIAN is set, instructions will be read
+		// in a little endian fashion, from the least significant byte
+		// in a bus word to the most significant.  Otherwise the most
+		// significant byte will be termed "first".
+		parameter [0:0]	OPT_LITTLE_ENDIAN = 1'b0,
 		parameter		OPT_WATCHDOG = 0,
 `ifdef	FORMAL
 		parameter [11:0]	DEF_CKCOUNT = 2,
@@ -362,7 +367,7 @@ module	wbi2ccpu #(
 		.ADDRESS_WIDTH(BAW),
 		.DATA_WIDTH(DW),
 		.INSN_WIDTH(8),
-		.OPT_LITTLE_ENDIAN(1'b0)
+		.OPT_LITTLE_ENDIAN(OPT_LITTLE_ENDIAN)
 		// }}}
 	) u_fetch (
 		// {{{
@@ -492,8 +497,9 @@ module	wbi2ccpu #(
 	always @(*)
 	if (!i_reset && !insn_valid && !r_manual)
 	begin
-		assert(pf_ready  == (!r_halted && !r_wait && !cpu_new_pc && !r_manual));
-		assert(ovw_ready || (rx_cycle && !arg_cycle));
+		assert(pf_ready  == (!r_halted && !r_wait && !cpu_new_pc
+						&& !r_manual && !half_valid));
+		assert(ovw_ready || (rx_cycle && !arg_cycle) || half_valid);
 	end
 `endif
 	// }}}
@@ -691,7 +697,7 @@ module	wbi2ccpu #(
 				|| (OPT_MANUAL && (r_manual || bus_manual)))
 		imm_count <= 0;
 	else if (halt_request || cpu_new_pc)
-		imm_count <= 1'b0;
+		imm_count <= 0;
 	// else if (!next_valid && !half_valid)
 	// begin
 	// end else if (!imm_cycle)
@@ -815,6 +821,10 @@ module	wbi2ccpu #(
 		if (arg_cycle)
 		begin
 			insn_valid <= rx_cycle;
+		end else if (next_insn[7:4] == CMD_NOOP)
+		begin
+			// We can always skip NOOP instructions
+			insn_valid <= 0;
 		end else if (next_insn[7:4] == CMD_SEND)
 		begin
 			// We need to read our count
@@ -1004,7 +1014,7 @@ module	wbi2ccpu #(
 	else if (r_halted || i_sync_signal)
 		r_wait <= 1'b0;
 	else begin
-		if (insn_valid && insn[11:8] == CMD_WAIT)
+		if (insn_valid && insn_ready && insn[11:8] == CMD_WAIT)
 			r_wait <= 1'b1;
 		if (bus_jump)
 			r_wait <= 1'b0;

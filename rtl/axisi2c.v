@@ -455,6 +455,9 @@ module axisi2c #(
 		//
 		DATA: begin
 			// {{{
+			// o_scl = 0 on entry, ck_scl might not yet be 0
+			// => One CKEDGE in this state
+			// => Two CKEDGE's if the data changes
 			o_scl <= 1'b0;
 			o_sda <= sreg[7] || (dir == D_RD);
 			if (o_sda == (sreg[7] || (dir == D_RD)))
@@ -466,6 +469,8 @@ module axisi2c #(
 			// }}}
 		CLOCK: begin
 			// {{{
+			// o_scl = ck_scl = 0 on entry
+			// => Two CKEDGE's in this state
 			if (ck_scl)
 			begin
 				o_scl <= 1'b0;
@@ -511,6 +516,7 @@ module axisi2c #(
 			// }}}
 		CKACKHI: begin
 			// {{{
+			// o_scl on entry
 			o_scl <= 1'b1;
 			if (ck_scl) // Check for clock stretching
 			begin

@@ -1,12 +1,13 @@
 [tasks]
 prf
+prfm prf opt_manual
 cvr
 
 [options]
 prf: mode prove
 cvr: mode cover
-depth 3
-cvr: depth 250
+depth 5
+cvr: depth 400
 
 [engines]
 smtbmc
