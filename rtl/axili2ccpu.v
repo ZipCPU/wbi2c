@@ -278,7 +278,7 @@ module	axili2ccpu #(
 	reg	[11:0]		i2c_ckcount, ckcount;
 	reg	[BAW-1:0]	abort_address, jump_target;
 	reg			r_wait, soft_halt_request, r_halted, r_err,
-				r_aborted;
+				r_aborted, abort_set;
 	wire			halt_request;
 	wire			r_manual, r_sda, r_scl;
 	wire			w_stopped, w_sda, w_scl;
@@ -853,7 +853,7 @@ module	axili2ccpu #(
 
 		// Abort an I2C command
 		// {{{
-		if (i2c_abort)
+		if (i2c_abort && abort_set)
 		begin
 			cpu_new_pc   <= 1'b1;
 			pf_jump_addr <= abort_address;
@@ -1072,16 +1072,27 @@ module	axili2ccpu #(
 `endif
 	// }}}
 
+	// abort_set
+	// {{{
+	always @(posedge i_clk)
+	if (i_reset || bus_jump || r_halted)
+		abort_set <= 1'b0;
+	else if (imm_cycle)
+	begin end
+	else if ((pf_valid && pf_ready && pf_insn[7:4]== CMD_ABORT)
+				||(half_valid && half_insn == CMD_ABORT))
+		abort_set <= 1'b1;
+	// }}}
+
 	// abort_address
 	// {{{
 	always @(posedge i_clk)
-	if (i_reset)
-		abort_address <= RESET_ADDRESS;
-	else if (bus_jump)
-		abort_address <= bus_write_data[BAW-1:0];
-	else if (pf_valid && pf_ready && !imm_cycle && pf_insn[7:4]== CMD_ABORT)
-			// || pf_insn == { CMD_START, CMD_SEND })
+	if (imm_cycle || r_halted)	// imm_cycle includes arg_cycle too
+	begin
+	end else if (pf_valid && pf_ready && pf_insn[7:4]== CMD_ABORT)
 		abort_address <= pf_insn_addr + 1;
+	else if (half_valid && half_insn == CMD_ABORT)
+		abort_address <= pf_insn_addr;
 	// }}}
 
 	// jump_target
@@ -1141,7 +1152,7 @@ module	axili2ccpu #(
 		if (insn_valid && insn_ready && insn[11:8] == CMD_STOP
 				&& soft_halt_request)
 			r_halted <= 1'b1;
-		if (soft_halt_request && i2c_abort)
+		if ((soft_halt_request || !abort_set) && i2c_abort)
 			r_halted <= 1'b1;
 		if (pf_valid && pf_ready && pf_illegal)
 			r_halted <= 1'b1;
@@ -1490,8 +1501,8 @@ module	axili2ccpu #(
 	// First, the prefetch and decoding
 
 	always @(*)
-	if (f_past_valid)
-		assert(!imm_cycle || !half_valid);
+	if (f_past_valid && imm_cycle && !arg_cycle)
+		assert(!half_valid);
 
 	////////////////////////////////////////////////////////////////////////
 	//
@@ -1513,7 +1524,7 @@ module	axili2ccpu #(
 	begin
 		assert(!insn_valid);
 		assert(!half_valid);
-	end else if ($past(s_tvalid && !insn_ready))
+	end else if ($past(s_tvalid && !s_tready))
 	begin
 		assert(s_tvalid);
 		assert($stable(insn[10:0]));
