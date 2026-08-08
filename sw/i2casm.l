@@ -174,7 +174,7 @@ void	grow_buffer(void) {
 	//	fprintf(stderr, "Growing buffer from %d to %d\n", m_binsz, m_binsz*2);
 	assert(m_binsz >= 512);
 	newbuf = new char[m_binsz * 2];
-	memcpy(newbuf, m_binary, m_pos);
+	memcpy(newbuf, m_binary, m_binsz);
 	m_binsz *= 2;
 	delete[] m_binary;
 	m_binary = newbuf;
